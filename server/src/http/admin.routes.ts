@@ -17,6 +17,7 @@ import {
 } from "@pixeloffice/shared";
 import { container } from "../container";
 import { isSocialEventType } from "../events/event.service";
+import { createAdminGuard } from "../auth/middleware";
 
 const DEFAULT_EVENT_MINUTES = 15;
 const DEFAULT_MEETING_DURATION = 30;
@@ -34,13 +35,22 @@ export function createAdminRouter(): Router {
   const router = Router();
   const map = buildOfficeMap();
 
+  // Admin-only gate. NO-OP when AUTH_REQUIRED is unset (dev console stays open);
+  // becomes requireRole('admin') (401 then 403) when AUTH_REQUIRED=true. The
+  // policy lives in one place — the services below stay auth-agnostic.
+  const guard = createAdminGuard(
+    container.authConfig.jwt,
+    container.authConfig.authRequired,
+  );
+
   // GET /api/health -------------------------------------------------------
+  // Always open: container/load-balancer probes must never require a token.
   router.get("/health", (_req: Request, res: Response) => {
     res.json({ ok: true });
   });
 
   // GET /api/users — connected players with presence + current area --------
-  router.get("/users", (_req: Request, res: Response) => {
+  router.get("/users", guard, (_req: Request, res: Response) => {
     const room = container.registry.room;
     if (!room) {
       res.json({ users: [] });
@@ -65,7 +75,7 @@ export function createAdminRouter(): Router {
   });
 
   // POST /api/events { type, title?, durationMinutes? } --------------------
-  router.post("/events", (req: Request, res: Response) => {
+  router.post("/events", guard, (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const type = body.type;
     if (!isSocialEventType(type)) {
@@ -84,7 +94,7 @@ export function createAdminRouter(): Router {
   });
 
   // POST /api/broadcast { message } ---------------------------------------
-  router.post("/broadcast", (req: Request, res: Response) => {
+  router.post("/broadcast", guard, (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const message = typeof body.message === "string" ? body.message.trim() : "";
     if (message.length === 0) {
@@ -102,7 +112,7 @@ export function createAdminRouter(): Router {
   });
 
   // POST /api/meetings { title, startsInMinutes?, durationMinutes?, participantIds? }
-  router.post("/meetings", (req: Request, res: Response) => {
+  router.post("/meetings", guard, (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const title = typeof body.title === "string" ? body.title.trim() : "";
     if (title.length === 0) {

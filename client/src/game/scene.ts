@@ -230,7 +230,8 @@ export class OfficeScene extends Phaser.Scene {
     });
     nameTag.setOrigin(0.5, 1).setDepth(DEPTH_OVERLAY);
 
-    const badge = this.add.text(px + TILE * 0.4, py - TILE * 1.0, BADGE_FOR[snap.presence], {
+    // Anchor the badge just past the name tag's right edge so it never overlaps.
+    const badge = this.add.text(px + nameTag.displayWidth / 2 + 7, py - TILE * 0.95, BADGE_FOR[snap.presence], {
       fontSize: "13px",
     });
     badge.setOrigin(0.5, 1).setDepth(DEPTH_OVERLAY);
@@ -271,7 +272,7 @@ export class OfficeScene extends Phaser.Scene {
     const px = a.sprite.x;
     const py = a.sprite.y;
     a.nameTag.setPosition(px, py - TILE * 0.95);
-    a.badge.setPosition(px + TILE * 0.4, py - TILE * 1.0);
+    a.badge.setPosition(px + a.nameTag.displayWidth / 2 + 7, py - TILE * 0.95);
     if (a.bubble) a.bubble.setPosition(px, py - TILE * 1.35);
   }
 

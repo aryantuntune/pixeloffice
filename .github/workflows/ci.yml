@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-test-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests (presence engine)
+        run: npm test
+
+      - name: Build client
+        run: npm run build -w client
+
+      - name: Boot server (background)
+        run: npm run start -w server &
+
+      - name: Wait for server readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:2567/api/health > /dev/null; then
+              echo "server is up"
+              exit 0
+            fi
+            echo "waiting for server... ($i)"
+            sleep 1
+          done
+          echo "server did not become ready in time" >&2
+          exit 1
+
+      - name: Smoke test (wire protocol)
+        run: npm run smoke

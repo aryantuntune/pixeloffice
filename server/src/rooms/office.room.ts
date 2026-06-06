@@ -92,6 +92,11 @@ export class OfficeRoom extends Room {
       if (snap) {
         snap.presence = state;
         snap.source = source;
+        // Best-effort persist the LATEST presence (no-op for the in-memory
+        // store; RedisPresenceStore swallows its own errors so a Redis blip
+        // never affects the live broadcast). Stores only {state, source, atMs}
+        // keyed by userId — no surveillance data (plan Principle 2).
+        void container.presenceStore.record(snap.userId, state, source, Date.now());
       }
       const payload: PresencePayload = { sessionId, state, source };
       this.broadcast(S2C.PRESENCE, payload);

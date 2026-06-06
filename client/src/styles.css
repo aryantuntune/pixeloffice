@@ -716,3 +716,149 @@ body {
   font-size: 11px;
   text-transform: uppercase;
 }
+
+/* ---------------------------------------------------------------------------
+   Connection banner (net/connection.ts ConnectionState -> ui/connection-banner)
+   Fixed top-center strip: amber pulse while reconnecting, green "Back online"
+   (auto-hides), red when offline. Hidden state collapses it out of the way.
+--------------------------------------------------------------------------- */
+.conn-banner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.conn-banner--hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-8px);
+  pointer-events: none;
+}
+
+.conn-banner__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+
+.conn-banner--reconnecting {
+  border-color: #e8a13c;
+}
+.conn-banner--reconnecting .conn-banner__dot {
+  background: #e8a13c;
+  animation: conn-pulse 1s ease-in-out infinite;
+}
+
+.conn-banner--online {
+  border-color: var(--accent);
+}
+.conn-banner--online .conn-banner__dot {
+  background: var(--accent);
+}
+
+.conn-banner--offline {
+  border-color: #e5544b;
+}
+.conn-banner--offline .conn-banner__dot {
+  background: #e5544b;
+}
+
+@keyframes conn-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Attendance widget (GreytHR integration; ui/attendance.ts). Reuses
+   .hud-panel / .hud-panel-title. Self-hides when HR is absent.
+--------------------------------------------------------------------------- */
+.attendance-widget {
+  /* Compact card pinned above the chat input — never covers the top bar. */
+  position: absolute;
+  left: 12px;
+  bottom: 64px;
+  width: 256px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.attendance-widget .attendance-status,
+.attendance-widget .attendance-actions,
+.attendance-widget .attendance-feedback {
+  padding: 0 12px;
+}
+
+.attendance-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.attendance-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9aa3ad;
+  flex: 0 0 auto;
+}
+
+.attendance-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.attendance-btn {
+  flex: 1;
+  padding: 6px 8px;
+  cursor: pointer;
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.attendance-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.attendance-btn.is-current {
+  border-color: var(--accent);
+}
+
+.attendance-feedback {
+  min-height: 14px;
+  font-size: 12px;
+}
+
+.attendance-feedback[data-kind="ok"] {
+  color: var(--accent);
+}
+
+.attendance-feedback[data-kind="error"] {
+  color: #e5544b;
+}

@@ -1,0 +1,15 @@
+# Keep the build context small and reproducible. node_modules is reinstalled
+# from the lockfile inside the image; build outputs are regenerated.
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+.github
+*.log
+.env
+.env.*
+notes
+Dockerfile
+.dockerignore
+npm-debug.log*

@@ -1,5 +1,9 @@
 # PixelOffice
 
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+
+> Replace `OWNER/REPO` in the badge above with your GitHub org/repo once pushed.
+
 PixelOffice is a multiplayer virtual office inspired by Pokémon Emerald that helps
 distributed teams feel present, connected, and aware of each other's availability
 without becoming a surveillance tool. You open the office in your browser, spawn at
@@ -121,6 +125,98 @@ To build the client for production:
 ```bash
 npm run build -w client
 ```
+
+---
+
+## Configuration
+
+**Every environment variable is optional.** With none set, `npm install && npm run dev`
+runs the full experience — dev login, in-memory storage, mock calendar, mock GreytHR,
+open admin console, ephemeral JWT. Each variable below is opt-in; a configured-but-dead
+integration (Postgres/Redis/GreytHR) logs a warning and falls back so the office keeps
+working (plan Principle 4: integrations are optional). Copy `.env.example` to `.env`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `2567` | Server port (REST + Colyseus ws). |
+| `JWT_SECRET` | ephemeral | App JWT signing secret. Unset → random per-process secret (tokens reset on restart) + boot warning. Set in production. |
+| `JWT_EXPIRES_IN` | `12h` | Token lifetime (jsonwebtoken format). |
+| `AUTH_REQUIRED` | `false` | When `true`, a valid JWT is required to join the room **and** an admin JWT is required for admin REST writes. |
+| `ADMIN_EMAILS` | _(empty)_ | Comma-separated emails granted the `admin` role (RBAC). |
+| `CLIENT_APP_URL` | `http://localhost:5173` | Where the browser is redirected after an OAuth callback. |
+| `DEFAULT_DEPARTMENT` | `Engineering` | Department for OAuth users who don't pick one. |
+| `OAUTH_REDIRECT_BASE` | _(unset)_ | Public base URL of this server; OAuth redirect URIs derive from it. Required to enable OAuth. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | _(unset)_ | Enable Google OAuth (both + redirect base required). |
+| `MS_CLIENT_ID` / `MS_CLIENT_SECRET` | _(unset)_ | Enable Microsoft OAuth (both + redirect base required). |
+| `MS_TENANT` | `common` | Azure AD tenant id, or `common` / `organizations` / `consumers`. |
+| `GREYTHR_BASE_URL` / `GREYTHR_API_TOKEN` | _(unset)_ | Enable the real GreytHR adapter (both required); else the in-memory mock. |
+| `GREYTHR_TIMEOUT_MS` | `5000` | Per-request GreytHR timeout. |
+| `DATABASE_URL` | _(unset)_ | Postgres user storage. Down → warn + in-memory fallback. |
+| `AUTO_MIGRATE` | `true` (when DB set) | Run `server/db/init.sql` on boot (idempotent). |
+| `REDIS_URL` | _(unset)_ | Redis presence storage. Down → warn + in-memory fallback. |
+| `SERVE_CLIENT` | `false` | Serve `client/dist` from Express on the API port (single-container deploy; the Docker image sets `true`). |
+| `API_RATE_LIMIT` / `API_RATE_WINDOW_MS` | `60` / `60000` | Token-bucket rate limit on `/api` per client IP (`GET /api/health` never throttled). |
+
+### OAuth setup (Google / Microsoft)
+
+OAuth replaces the dev login card with "Sign in with Google/Microsoft" buttons. The plan
+forbids username/password auth; OAuth providers implement the same `AuthProvider` interface.
+
+1. Set `OAUTH_REDIRECT_BASE` to this server's public URL (e.g. `https://office.company.com`).
+2. In the provider console, register the redirect URI:
+   - Google: `${OAUTH_REDIRECT_BASE}/api/auth/google/callback`
+   - Microsoft: `${OAUTH_REDIRECT_BASE}/api/auth/microsoft/callback`
+3. Set the client id/secret env vars (`GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`, and/or
+   `MS_CLIENT_ID` + `MS_CLIENT_SECRET`).
+4. Set `ADMIN_EMAILS` to the emails that should get the admin console, and
+   `CLIENT_APP_URL` to where the client app is served.
+5. (Optional) Set `AUTH_REQUIRED=true` to require a token to enter the office and lock the
+   admin REST API behind the admin role. Set `JWT_SECRET` so tokens survive restarts.
+
+Flow: client → `GET /api/auth/:provider/login` (302 to the IdP) → IdP →
+`GET /api/auth/:provider/callback` (code → identity → upsert user → mint our JWT) → 302 to
+`${CLIENT_APP_URL}/#token=...` → the client stores the token and joins the room with it.
+With **no** providers configured the login/callback routes 404 and the dev card is shown —
+the office runs exactly as the MVP.
+
+### GreytHR (attendance, optional)
+
+Set `GREYTHR_BASE_URL` + `GREYTHR_API_TOKEN` to activate the real adapter; otherwise an
+in-memory mock is used. The HUD shows an Attendance widget with explicit **Check in** /
+**Check out** buttons (it self-hides when HR is absent). Per the plan's GreytHR rules,
+attendance is **always** an explicit user click — there is no auto-check-in/out/logout and
+no activity tracking. A dead GreytHR config degrades gracefully (the office is unaffected).
+
+### Postgres + Redis (optional persistence, via Docker Compose)
+
+```bash
+docker compose up               # starts ONLY postgres + redis (datastores)
+DATABASE_URL=postgres://pixeloffice:pixeloffice@localhost:5432/pixeloffice \
+REDIS_URL=redis://localhost:6379 \
+npm run dev                      # the office now persists users + latest presence
+```
+
+Postgres stores users; Redis stores the **latest** presence per user (state + source +
+timestamp only — no surveillance data, no browsable history). With these unset the office
+uses in-memory storage; set-but-unreachable falls back to in-memory with a warning.
+
+### Docker image (single container: server + built client)
+
+```bash
+docker build -t pixeloffice .
+docker run --rm -p 2567:2567 pixeloffice     # open http://localhost:2567
+docker run --rm -p 2567:2567 -e SERVE_CLIENT=false pixeloffice   # API only
+```
+
+The image builds the client, serves it from Express (`SERVE_CLIENT=true`), runs as the
+unprivileged `node` user, exposes `2567`, and has a `HEALTHCHECK` on `/api/health`. To run
+the full stack (app + datastores): `docker compose --profile app up --build`.
+
+### Continuous Integration
+
+`.github/workflows/ci.yml` runs on every push and PR: `npm ci` → `npm test` →
+`npm run build -w client` → boot the server in the background → poll `/api/health` until
+ready → `npm run smoke`. It uses only `actions/checkout` and `actions/setup-node`.
 
 ---
 

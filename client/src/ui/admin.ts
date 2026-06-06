@@ -10,6 +10,14 @@ import {
   type SocialEventType,
 } from "@pixeloffice/shared";
 import { serverHttpBase } from "../net/connection";
+import { readStoredToken } from "./login";
+
+/** Attach the OAuth bearer token when one exists so admin writes work under
+ *  AUTH_REQUIRED. On the dev path no token exists and the header is omitted. */
+function authHeaders(base: Record<string, string> = {}): Record<string, string> {
+  const token = readStoredToken();
+  return token ? { ...base, Authorization: `Bearer ${token}` } : { ...base };
+}
 
 /** Friendly labels for the social event type select. */
 const EVENT_TYPE_LABELS: Record<SocialEventType, string> = {
@@ -132,7 +140,7 @@ export function createAdmin(parent: HTMLElement): void {
     try {
       const res = await fetch(api(path), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
       if (!res.ok) {
@@ -325,7 +333,7 @@ export function createAdmin(parent: HTMLElement): void {
       status.textContent = "Loading…";
       tableWrap.innerHTML = "";
       try {
-        const res = await fetch(api("/api/users"));
+        const res = await fetch(api("/api/users"), { headers: authHeaders() });
         if (!res.ok) {
           status.className = "admin-status error";
           status.textContent = `Failed (${res.status}).`;

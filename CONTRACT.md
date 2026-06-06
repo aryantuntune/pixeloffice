@@ -146,6 +146,72 @@ client/
 - Admin modal is plain `fetch` to `http://localhost:2567/api/*`.
 - Login screen blocks until joined; show errors (server down) gracefully.
 
+## Full-scope modules (added after the MVP — all opt-in)
+
+These extend the MVP behind the existing interfaces; the zero-config dev path is
+unchanged. The `shared/` wire protocol is unchanged except for ONE backward-compatible
+addition: `JoinOptions` may carry an optional `token` field (a JWT). It is read defensively
+server-side; the dev path omits it, so no `shared/` type change was required.
+
+### New server modules
+
+```
+server/src/
+  auth/auth-config.ts            # buildAuthConfig(env): jwt + enabled OAuth providers + RBAC + AUTH_REQUIRED
+  auth/jwt.service.ts            # JwtService sign/verify (ephemeral secret in dev)
+  auth/jwt-auth.provider.ts      # JwtAuthProvider implements AuthProvider (token verify + dev fallback)
+  auth/oauth-provider.ts         # OAuthProvider interface (+ Google/Microsoft impls)
+  auth/google-oauth.provider.ts  # authorization-code flow via fetch (no SDK)
+  auth/microsoft-oauth.provider.ts
+  auth/oauth-state.ts            # signed, TTL'd OAuth state
+  auth/rbac.ts                   # ADMIN_EMAILS -> role
+  auth/middleware.ts             # requireAuth / requireRole / createAdminGuard
+  http/auth.routes.ts            # /api/auth: config, me, :provider/login, :provider/callback
+  integrations/hr/hr-adapter.ts  # HrAdapter interface (+ MockGreytHr / GreytHr impls)
+  integrations/hr/attendance.service.ts  # framework-free explicit-action state machine
+  http/hr.routes.ts              # /api/hr: check-in, check-out, status, employee
+  persistence/database.ts        # pg Pool wrapper (Database.fromEnv, health, migrate)
+  persistence/redis.ts           # ioredis wrapper (RedisStore.fromEnv, health)
+  persistence/presence-store.ts  # PresenceStore interface (+ InMemory / Redis impls)
+  persistence/factories.ts       # createUserRepository / createPresenceStore (select + graceful fallback)
+  repositories/postgres-user.repository.ts  # PostgresUserRepository (UserRepository impl)
+  db/init.sql                    # users table + indexes (idempotent)
+  http/rate-limit.ts             # token-bucket limiter middleware (health-exempt)
+  http/static-client.ts          # SERVE_CLIENT static serving + SPA fallback
+  lifecycle/shutdown.ts          # graceful SIGINT/SIGTERM drain
+```
+
+`container.ts` exposes (in addition to the MVP): `auth` (now JWT-aware), `authConfig`,
+`hr`, `attendance`, and the `users` / `presenceStore` / `database` / `redis` getters
+populated by the async `initContainer()` (awaited in `index.ts` before `listen`). Admin
+write routes are wrapped by `createAdminGuard` (no-op unless `AUTH_REQUIRED=true`).
+
+### New client modules
+
+```
+client/src/
+  ui/connection-banner.ts   # renders ConnectionState (reconnecting/online/offline)
+  ui/attendance.ts          # GreytHR check-in/out widget (self-hides if HR absent)
+  net/connection.ts         # auto-reconnect with backoff; onState; retained handlers
+  ui/login.ts               # OAuth buttons + #token capture + dev fallback
+```
+
+`main.ts` re-bootstraps idempotently on every WELCOME (a reconnect issues a fresh
+sessionId): it tears down the old game/store and rebuilds from the authoritative welcome.
+
+### Environment matrix
+
+| Scope | Vars | Off (default) | On |
+|---|---|---|---|
+| Auth/JWT | `JWT_SECRET`, `JWT_EXPIRES_IN`, `AUTH_REQUIRED`, `ADMIN_EMAILS` | dev login, ephemeral JWT, open admin | token required to join + admin-only writes |
+| OAuth | `OAUTH_REDIRECT_BASE`, `GOOGLE_*`, `MS_*`, `MS_TENANT`, `CLIENT_APP_URL`, `DEFAULT_DEPARTMENT` | login routes 404; dev card | provider buttons; code→JWT |
+| HR | `GREYTHR_BASE_URL`, `GREYTHR_API_TOKEN`, `GREYTHR_TIMEOUT_MS` | mock adapter | real GreytHR REST adapter |
+| Persistence | `DATABASE_URL`, `AUTO_MIGRATE`, `REDIS_URL` | in-memory | Postgres users + Redis presence (down→fallback) |
+| Serving/ops | `SERVE_CLIENT`, `PORT`, `API_RATE_LIMIT`, `API_RATE_WINDOW_MS` | Vite serves client; default port/limits | Express serves client; tuned |
+
+A configured-but-unreachable Postgres/Redis/GreytHR NEVER crashes boot — it warns and
+degrades to the in-memory / mock path (plan Principle 4).
+
 ## Definition of Done (workflow gate)
 
 - `npm install && npm test` green (presence engine transitions covered).
