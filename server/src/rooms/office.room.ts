@@ -19,10 +19,16 @@ import { Room, type Client } from "colyseus";
 import {
   C2S,
   S2C,
+  AVATAR_IDS,
+  DEPARTMENTS,
   anchorFor,
   buildOfficeMap,
   isWalkable,
   PresenceState,
+  type AvatarId,
+  type Department,
+  type UpdateProfilePayload,
+  type PlayerUpdatedPayload,
   type ChatBroadcastPayload,
   type ChatPayload,
   type Direction,
@@ -42,6 +48,12 @@ import {
   type SocialEvent,
   type ToastPayload,
   type WelcomePayload,
+  type ActiveGame,
+  type GameType,
+  type GamePlayer,
+  type PongState,
+  type TicTacToeState,
+  type ConnectFourState,
 } from "@pixeloffice/shared";
 import { container } from "../container";
 import { createLogger } from "../logging/logger";
@@ -53,6 +65,7 @@ const log = createLogger("room");
 
 const TICK_MS = 3000;
 const MAX_CHAT = 140;
+const MAX_NAME = 24;
 const VALID_STATUSES = new Set(["AVAILABLE", "FOCUS", "BREAK", "AWAY"]);
 
 // Per-session message rate limits (token buckets). The websocket message path
@@ -99,6 +112,14 @@ export class OfficeRoom extends Room {
   private readonly chatBuckets = new Map<string, TokenBucket>();
   private readonly actionBuckets = new Map<string, TokenBucket>();
 
+  /** Active multiplayer games in the lounge. */
+  private readonly games = new Map<string, ActiveGame>();
+  private pongInterval?: any;
+  private pongVelX = 6;
+  private pongVelY = 5;
+  private paddle1Dir = 0;
+  private paddle2Dir = 0;
+
   // Bound service-listener handlers, retained so onDispose can remove EXACTLY
   // the listeners this instance added to the shared singleton emitters (a 2nd
   // room must not leave stale closures behind that cross-broadcast).
@@ -114,6 +135,43 @@ export class OfficeRoom extends Room {
 
     // Expose this live room to admin REST (broadcasts) via the registry seam.
     container.registry.room = this;
+
+    // Initialize active lounge games.
+    this.games.set("lounge:ping-pong", {
+      id: "lounge:ping-pong",
+      type: "ping-pong",
+      player1: null,
+      player2: null,
+      score1: 0,
+      score2: 0,
+      winnerSessionId: null,
+      state: { ballX: 300, ballY: 200, paddle1Y: 160, paddle2Y: 160 },
+      status: "idle",
+    });
+
+    this.games.set("lounge:tic-tac-toe", {
+      id: "lounge:tic-tac-toe",
+      type: "tic-tac-toe",
+      player1: null,
+      player2: null,
+      score1: 0,
+      score2: 0,
+      winnerSessionId: null,
+      state: { board: Array(9).fill(""), turn: "" },
+      status: "idle",
+    });
+
+    this.games.set("lounge:connect-four", {
+      id: "lounge:connect-four",
+      type: "connect-four",
+      player1: null,
+      player2: null,
+      score1: 0,
+      score2: 0,
+      winnerSessionId: null,
+      state: { board: Array(6).fill(null).map(() => Array(7).fill("")), turn: "" },
+      status: "idle",
+    });
 
     this.wireServiceListeners();
     this.registerMessageHandlers();
@@ -342,6 +400,11 @@ export class OfficeRoom extends Room {
     const joined: PlayerJoinedPayload = { player: { ...snapshot } };
     this.broadcastExcept(client, S2C.PLAYER_JOINED, joined);
 
+    // Push the state of all active games to the newly joined player.
+    for (const game of this.games.values()) {
+      client.send(S2C.GAME_UPDATE, { game });
+    }
+
     // Join complete: subsequent presence changes for this session broadcast.
     this.joining.delete(client.sessionId);
 
@@ -359,6 +422,14 @@ export class OfficeRoom extends Room {
     log.info("player left", { name: leaving?.name, sessionId, online: this.players.size - 1 });
     container.presence.untrack(sessionId);
     container.events.removeParticipant(sessionId);
+    
+    // Remove the leaving player from any active game rooms.
+    for (const game of this.games.values()) {
+      if (game.player1?.sessionId === sessionId || game.player2?.sessionId === sessionId) {
+        this.leaveGame(game, sessionId);
+      }
+    }
+
     this.players.delete(sessionId);
     this.sessionUser.delete(sessionId);
     this.homeSeat.delete(sessionId);
@@ -410,6 +481,12 @@ export class OfficeRoom extends Room {
       this.handleJoinMeeting(client, payload),
     );
     this.onMessage(C2S.LEAVE_MEETING, (client) => this.handleLeaveMeeting(client));
+    this.onMessage(C2S.UPDATE_PROFILE, (client, payload: UpdateProfilePayload) =>
+      this.handleUpdateProfile(client, payload),
+    );
+    this.onMessage(C2S.JOIN_GAME, (client, payload: any) => this.handleJoinGame(client, payload));
+    this.onMessage(C2S.LEAVE_GAME, (client, payload: any) => this.handleLeaveGame(client, payload));
+    this.onMessage(C2S.GAME_INPUT, (client, payload: any) => this.handleGameInput(client, payload));
 
     // Tolerate unknown / forward-compatible message types. Without a "*" handler
     // Colyseus disconnects the client (code 4002) on any unrecognised type, so a
@@ -471,6 +548,58 @@ export class OfficeRoom extends Room {
     container.presence.setManual(client.sessionId, state as SetStatusPayload["state"]);
     // Immediate tick so the manual change is reflected instantly.
     container.presence.tick(Date.now());
+  }
+
+  /**
+   * Apply a self-profile edit (name / department / avatar): update the snapshot,
+   * persist it, and broadcast PLAYER_UPDATED. Never moves the avatar.
+   */
+  private handleUpdateProfile(client: Client, payload: UpdateProfilePayload): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const snap = this.players.get(client.sessionId);
+    if (!snap || snap.isNpc) return; // NPCs never edit profiles
+
+    let changed = false;
+    if (typeof payload?.name === "string") {
+      const name = payload.name.trim().slice(0, MAX_NAME);
+      if (name.length > 0 && name !== snap.name) {
+        snap.name = name;
+        changed = true;
+      }
+    }
+    if (
+      typeof payload?.department === "string" &&
+      (DEPARTMENTS as readonly string[]).includes(payload.department) &&
+      payload.department !== snap.department
+    ) {
+      snap.department = payload.department as Department;
+      changed = true;
+    }
+    if (
+      typeof payload?.avatarId === "string" &&
+      (AVATAR_IDS as readonly string[]).includes(payload.avatarId) &&
+      payload.avatarId !== snap.avatarId
+    ) {
+      snap.avatarId = payload.avatarId as AvatarId;
+      changed = true;
+    }
+    if (!changed) return;
+
+    // Persist to the user record (best-effort) so the edit survives sessions.
+    void container.users.save({
+      id: snap.userId,
+      name: snap.name,
+      department: snap.department,
+      avatarId: snap.avatarId,
+    });
+
+    const updated: PlayerUpdatedPayload = {
+      sessionId: client.sessionId,
+      name: snap.name,
+      department: snap.department,
+      avatarId: snap.avatarId,
+    };
+    this.broadcast(S2C.PLAYER_UPDATED, updated);
   }
 
   private handleChat(client: Client, payload: ChatPayload): void {
@@ -635,6 +764,337 @@ export class OfficeRoom extends Room {
 
   private broadcastExcept(client: Client, type: string, message: unknown): void {
     this.broadcast(type, message, { except: client });
+  }
+
+  // -------------------------------------------------------------------------
+  // Lounge Games logic
+  // -------------------------------------------------------------------------
+
+  private handleJoinGame(client: Client, payload: { gameId: string }): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const gameId = payload?.gameId;
+    if (typeof gameId !== "string") return;
+    const game = this.games.get(gameId);
+    if (!game) return;
+
+    const snap = this.players.get(client.sessionId);
+    if (!snap) return;
+
+    // Check if player is already in this game or another game
+    for (const g of this.games.values()) {
+      if (g.player1?.sessionId === client.sessionId || g.player2?.sessionId === client.sessionId) {
+        return; // already in a game
+      }
+    }
+
+    const gamePlayer: GamePlayer = {
+      sessionId: client.sessionId,
+      name: snap.name,
+      avatarId: snap.avatarId,
+    };
+
+    if (!game.player1) {
+      game.player1 = gamePlayer;
+      game.status = "waiting";
+    } else if (!game.player2) {
+      game.player2 = gamePlayer;
+      game.status = "playing";
+      this.resetGameState(game);
+    } else {
+      return; // game is full
+    }
+
+    // Lock player's walking: set presence to FOCUS
+    container.presence.activity(client.sessionId, Date.now());
+    container.presence.setManual(client.sessionId, "FOCUS");
+    container.presence.tick(Date.now());
+
+    this.broadcast(S2C.GAME_UPDATE, { game });
+  }
+
+  private resetGameState(game: ActiveGame): void {
+    game.winnerSessionId = null;
+    if (game.type === "ping-pong") {
+      game.score1 = 0;
+      game.score2 = 0;
+      game.state = {
+        ballX: 300,
+        ballY: 200,
+        paddle1Y: 160,
+        paddle2Y: 160,
+      };
+      if (!this.pongInterval) {
+        this.pongInterval = this.clock.setInterval(() => this.tickPong(), 40);
+      }
+    } else if (game.type === "tic-tac-toe") {
+      game.state = {
+        board: Array(9).fill(""),
+        turn: game.player1!.sessionId,
+      } as TicTacToeState;
+    } else if (game.type === "connect-four") {
+      game.state = {
+        board: Array(6).fill(null).map(() => Array(7).fill("")),
+        turn: game.player1!.sessionId,
+      } as ConnectFourState;
+    }
+  }
+
+  private handleLeaveGame(client: Client, payload: { gameId: string }): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const gameId = payload?.gameId;
+    if (typeof gameId !== "string") return;
+    const game = this.games.get(gameId);
+    if (!game) return;
+    this.leaveGame(game, client.sessionId);
+  }
+
+  private leaveGame(game: ActiveGame, sessionId: string): void {
+    let removed = false;
+    if (game.player1?.sessionId === sessionId) {
+      game.player1 = null;
+      removed = true;
+    } else if (game.player2?.sessionId === sessionId) {
+      game.player2 = null;
+      removed = true;
+    }
+
+    if (removed) {
+      container.presence.setManual(sessionId, "AVAILABLE");
+      container.presence.tick(Date.now());
+
+      if (game.status === "playing") {
+        if (game.player1) {
+          game.status = "waiting";
+        } else if (game.player2) {
+          game.status = "waiting";
+        } else {
+          game.status = "idle";
+        }
+      } else if (game.status === "waiting" || game.status === "gameover") {
+        if (!game.player1 && !game.player2) {
+          game.status = "idle";
+        } else {
+          game.status = "waiting";
+        }
+      }
+
+      // If no active ping-pong game is running, stop interval
+      let anyPongRunning = false;
+      for (const g of this.games.values()) {
+        if (g.type === "ping-pong" && g.status === "playing") {
+          anyPongRunning = true;
+        }
+      }
+      if (!anyPongRunning && this.pongInterval) {
+        this.pongInterval.clear();
+        this.pongInterval = undefined;
+      }
+
+      this.broadcast(S2C.GAME_UPDATE, { game });
+    }
+  }
+
+  private tickPong(): void {
+    const game = this.games.get("lounge:ping-pong");
+    if (!game || game.status !== "playing" || !game.state) return;
+    const state = game.state as PongState;
+
+    // Move paddles
+    const paddleSpeed = 8;
+    const paddleHeight = 80;
+    const courtHeight = 400;
+
+    if (this.paddle1Dir === -1) {
+      state.paddle1Y = Math.max(0, state.paddle1Y - paddleSpeed);
+    } else if (this.paddle1Dir === 1) {
+      state.paddle1Y = Math.min(courtHeight - paddleHeight, state.paddle1Y + paddleSpeed);
+    }
+
+    if (this.paddle2Dir === -1) {
+      state.paddle2Y = Math.max(0, state.paddle2Y - paddleSpeed);
+    } else if (this.paddle2Dir === 1) {
+      state.paddle2Y = Math.min(courtHeight - paddleHeight, state.paddle2Y + paddleSpeed);
+    }
+
+    // Move ball
+    state.ballX += this.pongVelX;
+    state.ballY += this.pongVelY;
+
+    // Bounce off top and bottom walls
+    if (state.ballY <= 4) {
+      state.ballY = 4;
+      this.pongVelY = -this.pongVelY;
+    } else if (state.ballY >= 396) {
+      state.ballY = 396;
+      this.pongVelY = -this.pongVelY;
+    }
+
+    // Bounce off paddles
+    if (this.pongVelX < 0 && state.ballX <= 30 && state.ballX >= 20) {
+      if (state.ballY >= state.paddle1Y && state.ballY <= state.paddle1Y + 80) {
+        state.ballX = 30;
+        this.pongVelX = -this.pongVelX;
+        const hitOffset = (state.ballY - (state.paddle1Y + 40)) / 40;
+        this.pongVelY = hitOffset * 6;
+      }
+    }
+
+    if (this.pongVelX > 0 && state.ballX >= 570 && state.ballX <= 580) {
+      if (state.ballY >= state.paddle2Y && state.ballY <= state.paddle2Y + 80) {
+        state.ballX = 570;
+        this.pongVelX = -this.pongVelX;
+        const hitOffset = (state.ballY - (state.paddle2Y + 40)) / 40;
+        this.pongVelY = hitOffset * 6;
+      }
+    }
+
+    // Out of bounds
+    if (state.ballX < 0) {
+      game.score2++;
+      this.resetBall();
+    } else if (state.ballX > 600) {
+      game.score1++;
+      this.resetBall();
+    }
+
+    // Check game over
+    if (game.score1 >= 5) {
+      game.winnerSessionId = game.player1!.sessionId;
+      game.status = "gameover";
+      if (this.pongInterval) {
+        this.pongInterval.clear();
+        this.pongInterval = undefined;
+      }
+    } else if (game.score2 >= 5) {
+      game.winnerSessionId = game.player2!.sessionId;
+      game.status = "gameover";
+      if (this.pongInterval) {
+        this.pongInterval.clear();
+        this.pongInterval = undefined;
+      }
+    }
+
+    this.broadcast(S2C.GAME_UPDATE, { game });
+  }
+
+  private resetBall(): void {
+    const game = this.games.get("lounge:ping-pong");
+    if (!game || !game.state) return;
+    const state = game.state as PongState;
+    state.ballX = 300;
+    state.ballY = 200;
+    this.pongVelX = this.pongVelX > 0 ? -6 : 6;
+    this.pongVelY = (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 3);
+  }
+
+  private handleGameInput(client: Client, payload: { gameId: string, input: any }): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const gameId = payload?.gameId;
+    if (typeof gameId !== "string") return;
+    const game = this.games.get(gameId);
+    if (!game || game.status !== "playing") return;
+
+    const input = payload?.input;
+    if (!input) return;
+
+    if (game.type === "ping-pong") {
+      const isPlayer1 = game.player1?.sessionId === client.sessionId;
+      const isPlayer2 = game.player2?.sessionId === client.sessionId;
+      if (!isPlayer1 && !isPlayer2) return;
+
+      const dir = input.dir; // "up" | "down" | "stop"
+      const val = dir === "up" ? -1 : dir === "down" ? 1 : 0;
+      if (isPlayer1) {
+        this.paddle1Dir = val;
+      } else {
+        this.paddle2Dir = val;
+      }
+    } else if (game.type === "tic-tac-toe") {
+      const state = game.state as TicTacToeState;
+      if (state.turn !== client.sessionId) return;
+
+      const cellIndex = input.cellIndex;
+      if (typeof cellIndex !== "number" || cellIndex < 0 || cellIndex > 8) return;
+      if (state.board[cellIndex] !== "") return;
+
+      const symbol = client.sessionId === game.player1!.sessionId ? "X" : "O";
+      state.board[cellIndex] = symbol;
+
+      if (this.checkTicTacToeWin(state.board, symbol)) {
+        game.winnerSessionId = client.sessionId;
+        game.status = "gameover";
+      } else if (state.board.every((c) => c !== "")) {
+        game.winnerSessionId = null; // draw
+        game.status = "gameover";
+      } else {
+        state.turn = client.sessionId === game.player1!.sessionId ? game.player2!.sessionId : game.player1!.sessionId;
+      }
+
+      this.broadcast(S2C.GAME_UPDATE, { game });
+    } else if (game.type === "connect-four") {
+      const state = game.state as ConnectFourState;
+      if (state.turn !== client.sessionId) return;
+
+      const colIndex = input.colIndex;
+      if (typeof colIndex !== "number" || colIndex < 0 || colIndex > 6) return;
+
+      let droppedRow = -1;
+      for (let r = 5; r >= 0; r--) {
+        if (state.board[r][colIndex] === "") {
+          droppedRow = r;
+          break;
+        }
+      }
+      if (droppedRow === -1) return;
+
+      const token = client.sessionId === game.player1!.sessionId ? "R" : "Y";
+      state.board[droppedRow][colIndex] = token;
+
+      if (this.checkConnectFourWin(state.board, token)) {
+        game.winnerSessionId = client.sessionId;
+        game.status = "gameover";
+      } else if (state.board.every((row) => row.every((c) => c !== ""))) {
+        game.winnerSessionId = null; // draw
+        game.status = "gameover";
+      } else {
+        state.turn = client.sessionId === game.player1!.sessionId ? game.player2!.sessionId : game.player1!.sessionId;
+      }
+
+      this.broadcast(S2C.GAME_UPDATE, { game });
+    }
+  }
+
+  private checkTicTacToeWin(board: string[], symbol: string): boolean {
+    const lines = [
+      [0, 1, 2], [3, 4, 5], [6, 7, 8],
+      [0, 3, 6], [1, 4, 7], [2, 5, 8],
+      [0, 4, 8], [2, 4, 6]
+    ];
+    return lines.some((line) => line.every((idx) => board[idx] === symbol));
+  }
+
+  private checkConnectFourWin(board: string[][], token: string): boolean {
+    for (let r = 0; r < 6; r++) {
+      for (let c = 0; c < 4; c++) {
+        if (board[r][c] === token && board[r][c+1] === token && board[r][c+2] === token && board[r][c+3] === token) return true;
+      }
+    }
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 7; c++) {
+        if (board[r][c] === token && board[r+1][c] === token && board[r+2][c] === token && board[r+3][c] === token) return true;
+      }
+    }
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 4; c++) {
+        if (board[r][c] === token && board[r+1][c+1] === token && board[r+2][c+2] === token && board[r+3][c+3] === token) return true;
+      }
+    }
+    for (let r = 3; r < 6; r++) {
+      for (let c = 0; c < 4; c++) {
+        if (board[r][c] === token && board[r-1][c+1] === token && board[r-2][c+2] === token && board[r-3][c+3] === token) return true;
+      }
+    }
+    return false;
   }
 }
 

@@ -18,6 +18,7 @@ import {
   type SocialEventType,
 } from "@pixeloffice/shared";
 import type { Store, UiState } from "./state";
+import { mountGameOverlay, type GameOverlayHandle } from "./games";
 
 const MAP = buildOfficeMap();
 const CHAT_MAX = 140;
@@ -73,6 +74,8 @@ export interface HudCallbacks {
   onSendChat(text: string): void;
   /** Notify wiring that the chat input focus changed (to gate game input). */
   onChatFocus?(focused: boolean): void;
+  onLeaveGame(gameId: string): void;
+  onGameInput(gameId: string, input: any): void;
 }
 
 export interface HudHandle {
@@ -91,6 +94,17 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   const layer = document.createElement("div");
   layer.className = "hud-layer";
   parent.appendChild(layer);
+
+  // --- Game Prompt ---------------------------------------------------------
+  const promptEl = document.createElement("div");
+  promptEl.className = "hud-interact-prompt";
+  promptEl.style.display = "none";
+  layer.appendChild(promptEl);
+
+  // --- Game Overlay Container ----------------------------------------------
+  const gameOverlayContainer = document.createElement("div");
+  gameOverlayContainer.className = "hud-game-overlay-container";
+  layer.appendChild(gameOverlayContainer);
 
   // --- Top bar -------------------------------------------------------------
   const topBar = document.createElement("div");
@@ -391,6 +405,29 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
     return card;
   }
 
+  let gameOverlay: GameOverlayHandle | null = null;
+
+  function renderGameOverlay(state: UiState): void {
+    const activeId = state.activeGameId;
+    if (!activeId) {
+      if (gameOverlay) {
+        gameOverlay.destroy();
+        gameOverlay = null;
+        cb.onChatFocus?.(false);
+      }
+      return;
+    }
+
+    const game = state.activeGames.get(activeId);
+    if (!game) return;
+
+    if (!gameOverlay) {
+      cb.onChatFocus?.(true);
+      gameOverlay = mountGameOverlay(gameOverlayContainer, store, cb);
+    }
+    gameOverlay.render(game);
+  }
+
   function render(): void {
     const state = store.get();
     const self = store.self();
@@ -399,6 +436,15 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
     renderMeeting(state);
     renderRoster(state);
     renderEvents(state);
+
+    if (state.interactPrompt) {
+      promptEl.textContent = state.interactPrompt;
+      promptEl.style.display = "block";
+    } else {
+      promptEl.style.display = "none";
+    }
+
+    renderGameOverlay(state);
   }
 
   // Re-render once per second so event "time left" countdowns tick down.
@@ -410,6 +456,10 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
     destroy(): void {
       window.clearInterval(timerId);
       document.removeEventListener("click", onDocClick);
+      if (gameOverlay) {
+        gameOverlay.destroy();
+        gameOverlay = null;
+      }
       layer.remove();
     },
   };

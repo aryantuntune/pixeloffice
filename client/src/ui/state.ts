@@ -12,6 +12,7 @@ import type {
   PresenceSource,
   PresenceState,
   SocialEvent,
+  ActiveGame,
 } from "@pixeloffice/shared";
 
 export interface UiState {
@@ -26,6 +27,10 @@ export interface UiState {
   joinedMeeting: boolean;
   /** Current area name of the local player, as reported by the game. */
   selfArea: string;
+  activeGames: Map<string, ActiveGame>;
+  activeGameId: string | null;
+  interactPrompt: string | null;
+  interactGameId: string | null;
 }
 
 type Listener = (state: UiState) => void;
@@ -42,6 +47,10 @@ export class Store {
       myMeeting: null,
       joinedMeeting: false,
       selfArea: "Hallway",
+      activeGames: new Map(),
+      activeGameId: null,
+      interactPrompt: null,
+      interactGameId: null,
     };
   }
 
@@ -132,6 +141,27 @@ export class Store {
     if (this.state.myMeeting && this.state.myMeeting.id !== meetingId) return;
     this.state.myMeeting = null;
     this.state.joinedMeeting = false;
+    this.emit();
+  }
+
+  setInteractPrompt(prompt: string | null, gameId?: string): void {
+    this.state.interactPrompt = prompt;
+    this.state.interactGameId = gameId || null;
+    this.emit();
+  }
+
+  setGame(game: ActiveGame): void {
+    this.state.activeGames.set(game.id, game);
+    const selfId = this.state.selfId;
+    const isPlayer1 = game.player1?.sessionId === selfId;
+    const isPlayer2 = game.player2?.sessionId === selfId;
+    if (isPlayer1 || isPlayer2) {
+      this.state.activeGameId = game.id;
+    } else {
+      if (this.state.activeGameId === game.id) {
+        this.state.activeGameId = null;
+      }
+    }
     this.emit();
   }
 
