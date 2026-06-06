@@ -23,6 +23,7 @@ capture, or productivity scoring, ever.
 </p>
 
 **Docs:** [Player Guide](docs/GAMEPLAY.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[greytHR Sign-In](docs/greythr-login-integration.md) · [Lounge Games](docs/lounge-games.md) ·
 [Module Contract](CONTRACT.md) · [Product Constitution](plan.md)
 
 ---
@@ -35,7 +36,9 @@ npm run dev          # server on :2567, client on :5173
 ```
 
 Then open **http://localhost:5173**. Pick a name, department, and avatar, and click
-**Enter Office**.
+**Enter Office**. (With **greytHR sign-in** enabled you instead enter your **Employee No +
+password** — your name and department come from greytHR; see
+[greytHR Sign-In](#greythr-sign-in-login--identity-optional).)
 
 To see multiplayer presence, **open http://localhost:5173 in two or more browser
 windows** (or share your LAN IP with a teammate). Each window is a separate avatar;
@@ -77,6 +80,20 @@ move one with the arrow keys / WASD and watch it move in real time in the others
 - **Admin console.** The ⚙ Admin button opens a modal (plain REST calls) with tabs to
   create events, schedule meetings, send broadcasts, and view the live roster of
   connected users with their presence and current area.
+- **greytHR sign-in (optional).** When enabled, greytHR is the office login: you enter
+  only your **Employee No + password** (the company subdomain is autofilled) and your real
+  **name + department** are pulled from greytHR. greytHR acts as an external IdP — the
+  server forwards the credential to the self-hosted greytHR ESS client and mints the
+  office JWT; PixelOffice never stores the password. See
+  [docs/greythr-login-integration.md](docs/greythr-login-integration.md).
+- **Profile editing.** Double-click **your own avatar** to open a profile modal and change
+  your display name, **department** (a dropdown to fix a greytHR mismatch), and avatar
+  color. Changes broadcast to everyone live, persist to your user record, and survive
+  reconnects. (Never teleports your avatar — human-agency rule.)
+- **Lounge games.** Three two-player mini-games in the Lounge — **Ping-Pong**,
+  **Tic-Tac-Toe**, **Connect Four**. Walk up to a station and press **E** to play.
+  Server-authoritative; opt-in and explicit; never affects presence or HR. See
+  [docs/lounge-games.md](docs/lounge-games.md).
 
 ---
 
@@ -195,6 +212,39 @@ Flow: client → `GET /api/auth/:provider/login` (302 to the IdP) → IdP →
 `${CLIENT_APP_URL}/#token=...` → the client stores the token and joins the room with it.
 With **no** providers configured the login/callback routes 404 and the dev card is shown —
 the office runs exactly as the MVP.
+
+### greytHR Sign-In (login + identity, optional)
+
+Makes **greytHR the office login** (distinct from the attendance integration below, which
+uses greytHR's official admin API). greytHR is treated as an external identity provider:
+the user signs in with their greytHR **Employee No + password**, and PixelOffice pulls
+their real **name + department** from the self-hosted greytHR ESS client (the headless
+service that performs the real Ory-Hydra OAuth2/OIDC + RSA-OAEP login). OFF by default —
+the zero-config dev login card is shown unless enabled.
+
+```bash
+GREYTHR_LOGIN_ENABLED=true              # enables "Sign in with greytHR"
+GREYTHR_CLIENT_URL=http://localhost:3000 # base URL of the greytHR ESS client service
+GREYTHR_SUBDOMAIN=kalvium               # autofilled in the form + forwarded
+# GREYTHR_LOGIN_TIMEOUT_MS=8000         # per-request timeout (login is slow)
+```
+
+Flow: client `POST /api/auth/greythr/login` `{ loginId, password }` → server forwards the
+credential **once, server-to-server** to `{GREYTHR_CLIENT_URL}/api/auth/login` → maps the
+greytHR department onto an office department → upserts the user (`greythr:<employeeNo>`) →
+mints **our** JWT → returns `{ token, profile }`; the client joins the room with the token
+via the existing `JwtAuthProvider` path. **PixelOffice never stores the password** (only
+the minted JWT). After joining, double-click your avatar to fix a department mismatch.
+
+- **Login is seamless:** only Employee No + password (subdomain autofilled); no display-name
+  field, no department picker, and no guest “Enter Office” button.
+- **Security note:** the greytHR ESS client reuses a cached session for `subdomain:loginId`
+  before re-validating the password, so a cached employee can be “logged in” with any
+  password. This is an auth-bypass risk for multi-user login — the fix belongs in the
+  greytHR repo. Details in [docs/greythr-login-integration.md](docs/greythr-login-integration.md).
+
+> `.env` is loaded automatically at boot (no `dotenv` dependency — the server uses Node's
+> built-in env-file loader and never overrides real environment variables).
 
 ### GreytHR (attendance, optional) — kalvium.greythr.com walkthrough
 
