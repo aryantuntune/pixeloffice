@@ -99,3 +99,41 @@ export const PRESENCE_META: Record<PresenceState, { label: string; color: string
   [PresenceState.AWAY]: { label: "Away", color: "#9aa3ad", emoji: "💤" },
   [PresenceState.OFFLINE]: { label: "Offline", color: "#5b6470", emoji: "" },
 };
+
+export type GameType = "ping-pong" | "tic-tac-toe" | "connect-four";
+
+export interface GamePlayer {
+  sessionId: string;
+  name: string;
+  avatarId: string;
+}
+
+export interface PongState {
+  ballX: number;
+  ballY: number;
+  paddle1Y: number;
+  paddle2Y: number;
+}
+
+export interface TicTacToeState {
+  board: string[]; // 9 cells: "", "X", "O"
+  turn: string; // sessionId
+}
+
+export interface ConnectFourState {
+  board: string[][]; // 6 rows x 7 cols: "", "R", "Y"
+  turn: string; // sessionId
+}
+
+export interface ActiveGame {
+  id: string;
+  type: GameType;
+  player1: GamePlayer | null;
+  player2: GamePlayer | null;
+  score1: number;
+  score2: number;
+  winnerSessionId: string | null;
+  state: PongState | TicTacToeState | ConnectFourState | null;
+  status: "idle" | "waiting" | "playing" | "gameover";
+}
+

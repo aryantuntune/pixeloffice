@@ -35,7 +35,15 @@ export interface Desk {
 
 export type FurnitureKind =
   | "desk"
+  | "desk-engineering"
+  | "desk-product"
+  | "desk-design"
+  | "desk-hr"
   | "chair"
+  | "chair-engineering"
+  | "chair-product"
+  | "chair-design"
+  | "chair-hr"
   | "table"
   | "sofa"
   | "plant"
@@ -43,7 +51,16 @@ export type FurnitureKind =
   | "coffee-machine"
   | "reception-desk"
   | "rug"
-  | "door-mat";
+  | "door-mat"
+  | "bookshelf"
+  | "vending-machine"
+  | "water-cooler"
+  | "ping-pong-table"
+  | "beanbag"
+  | "whiteboard"
+  | "desk-lamp"
+  | "chess-table"
+  | "arcade-cabinet";
 
 export interface Furniture {
   kind: FurnitureKind;
@@ -153,14 +170,51 @@ export function buildOfficeMap(): OfficeMap {
   const furniture: Furniture[] = [];
   // Department desks + chairs.
   for (const d of desks) {
-    furniture.push({ kind: "desk", x: d.x, y: d.y, w: 2, h: 1, solid: true });
-    furniture.push({ kind: "chair", x: d.seatX, y: d.seatY, w: 1, h: 1, solid: false });
+    let deskKind: FurnitureKind = "desk";
+    let chairKind: FurnitureKind = "chair";
+    if (d.department === "Engineering") {
+      deskKind = "desk-engineering";
+      chairKind = "chair-engineering";
+    } else if (d.department === "Product") {
+      deskKind = "desk-product";
+      chairKind = "chair-product";
+    } else if (d.department === "Design") {
+      deskKind = "desk-design";
+      chairKind = "chair-design";
+    } else if (d.department === "HR") {
+      deskKind = "desk-hr";
+      chairKind = "chair-hr";
+    }
+    furniture.push({ kind: deskKind, x: d.x, y: d.y, w: 2, h: 1, solid: true });
+    furniture.push({ kind: chairKind, x: d.seatX, y: d.seatY, w: 1, h: 1, solid: false });
   }
-  // Meeting room tables.
-  furniture.push({ kind: "table", x: 4, y: 4, w: 3, h: 2, solid: true }); // Room A
-  furniture.push({ kind: "table", x: 14, y: 4, w: 4, h: 2, solid: true }); // Room B
-  furniture.push({ kind: "table", x: 25, y: 4, w: 5, h: 2, solid: true }); // Room C
-  // Coffee area: counter along the top with machines, plus standing tables.
+
+  // Meeting rooms: tables, whiteboards on walls, and exactly 6 chairs around tables (two top, two bottom, one left, one right).
+  const meetingRooms = [
+    { tableX: 4, tableY: 4, w: 3, h: 2, boardX: 2 },
+    { tableX: 14, tableY: 4, w: 4, h: 2, boardX: 12 },
+    { tableX: 25, tableY: 4, w: 5, h: 2, boardX: 23 }
+  ];
+  for (const r of meetingRooms) {
+    furniture.push({ kind: "table", x: r.tableX, y: r.tableY, w: r.w, h: r.h, solid: true });
+    furniture.push({ kind: "whiteboard", x: r.boardX, y: 1, w: 2, h: 1, solid: true });
+    
+    // Add exactly two chairs at the top of the table (at corners)
+    furniture.push({ kind: "chair", x: r.tableX, y: r.tableY - 1, w: 1, h: 1, solid: false });
+    furniture.push({ kind: "chair", x: r.tableX + r.w - 1, y: r.tableY - 1, w: 1, h: 1, solid: false });
+    
+    // Add exactly two chairs at the bottom of the table (at corners)
+    furniture.push({ kind: "chair", x: r.tableX, y: r.tableY + r.h, w: 1, h: 1, solid: false });
+    furniture.push({ kind: "chair", x: r.tableX + r.w - 1, y: r.tableY + r.h, w: 1, h: 1, solid: false });
+    
+    // Add exactly one chair on the left end
+    furniture.push({ kind: "chair", x: r.tableX - 1, y: r.tableY, w: 1, h: 1, solid: false });
+    
+    // Add exactly one chair on the right end
+    furniture.push({ kind: "chair", x: r.tableX + r.w, y: r.tableY, w: 1, h: 1, solid: false });
+  }
+
+  // Coffee area: counter along the top with machines, standing tables, plants, water cooler, and vending machine.
   furniture.push({ kind: "counter", x: 35, y: 2, w: 11, h: 1, solid: true });
   furniture.push({ kind: "coffee-machine", x: 36, y: 2, w: 1, h: 1, solid: true });
   furniture.push({ kind: "coffee-machine", x: 43, y: 2, w: 1, h: 1, solid: true });
@@ -170,7 +224,10 @@ export function buildOfficeMap(): OfficeMap {
   furniture.push({ kind: "table", x: 42, y: 9, w: 2, h: 1, solid: true });
   furniture.push({ kind: "plant", x: 35, y: 10, w: 1, h: 1, solid: true });
   furniture.push({ kind: "plant", x: 45, y: 10, w: 1, h: 1, solid: true });
-  // Lounge: sofas around a rug + side table.
+  furniture.push({ kind: "water-cooler", x: 35, y: 6, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "vending-machine", x: 45, y: 6, w: 1, h: 1, solid: true });
+
+  // Lounge: sofas around a rug, coffee table, plants, beanbags, bookshelves, and a ping pong table.
   furniture.push({ kind: "rug", x: 37, y: 16, w: 4, h: 3, solid: false });
   furniture.push({ kind: "sofa", x: 36, y: 15, w: 3, h: 1, solid: true });
   furniture.push({ kind: "sofa", x: 36, y: 19, w: 3, h: 1, solid: true });
@@ -180,11 +237,43 @@ export function buildOfficeMap(): OfficeMap {
   furniture.push({ kind: "plant", x: 45, y: 13, w: 1, h: 1, solid: true });
   furniture.push({ kind: "plant", x: 35, y: 23, w: 1, h: 1, solid: true });
   furniture.push({ kind: "plant", x: 45, y: 23, w: 1, h: 1, solid: true });
-  // Reception: front desk, plants, entrance mat.
+  // New Lounge Items:
+  furniture.push({ kind: "bookshelf", x: 35, y: 14, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "bookshelf", x: 45, y: 14, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "beanbag", x: 36, y: 17, w: 1, h: 1, solid: false });
+  furniture.push({ kind: "beanbag", x: 41, y: 15, w: 1, h: 1, solid: false });
+  furniture.push({ kind: "beanbag", x: 41, y: 19, w: 1, h: 1, solid: false });
+  furniture.push({ kind: "ping-pong-table", x: 38, y: 21, w: 3, h: 2, solid: true });
+  furniture.push({ kind: "arcade-cabinet", x: 35, y: 15, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "chess-table", x: 45, y: 15, w: 1, h: 1, solid: true });
+
+  // HR Area: visitor chairs
+  furniture.push({ kind: "chair-hr", x: 19, y: 23, w: 1, h: 1, solid: false });
+  furniture.push({ kind: "chair-hr", x: 25, y: 23, w: 1, h: 1, solid: false });
+
+  // Reception: front desk, plants, entrance mat, waiting sofa, coffee table, desk lamp, visitor chair.
   furniture.push({ kind: "reception-desk", x: 28, y: 29, w: 4, h: 1, solid: true });
   furniture.push({ kind: "plant", x: 18, y: 29, w: 1, h: 1, solid: true });
   furniture.push({ kind: "plant", x: 45, y: 29, w: 1, h: 1, solid: true });
   furniture.push({ kind: "door-mat", x: 31, y: 32, w: 2, h: 1, solid: false });
+  furniture.push({ kind: "sofa", x: 20, y: 29, w: 3, h: 1, solid: true });
+  furniture.push({ kind: "table", x: 23, y: 29, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "desk-lamp", x: 27, y: 29, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "chair", x: 25, y: 29, w: 1, h: 1, solid: false });
+
+  // Populating empty areas inside departments (whiteboards, bookshelves, vending machines, water coolers)
+  // Engineering right empty space (x: 13..15):
+  furniture.push({ kind: "whiteboard", x: 13, y: 11, w: 2, h: 1, solid: true });
+  furniture.push({ kind: "water-cooler", x: 14, y: 15, w: 1, h: 1, solid: true });
+  // Product right empty space (x: 29..32):
+  furniture.push({ kind: "bookshelf", x: 30, y: 11, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "whiteboard", x: 30, y: 15, w: 2, h: 1, solid: true });
+  // Design right empty space (x: 13..15):
+  furniture.push({ kind: "bookshelf", x: 14, y: 23, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "whiteboard", x: 13, y: 27, w: 2, h: 1, solid: true });
+  // HR right empty space (x: 29..32):
+  furniture.push({ kind: "vending-machine", x: 30, y: 23, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "water-cooler", x: 31, y: 23, w: 1, h: 1, solid: true });
 
   // Collision grid.
   const solid: boolean[][] = Array.from({ length: MAP_H }, () => Array<boolean>(MAP_W).fill(false));
