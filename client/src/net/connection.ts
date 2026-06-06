@@ -193,6 +193,13 @@ export class Connection {
     this.room.send(type, payload);
   }
 
+  /** Merge profile fields into the retained join options so a reconnect
+   *  re-sends the edited values. No-op if not yet connected. */
+  updateJoinProfile(partial: Partial<JoinOptions>): void {
+    if (!this.joinOptions) return;
+    this.joinOptions = { ...this.joinOptions, ...partial };
+  }
+
   /** Called whenever the room is left. Fires for every drop (including those
    *  that trigger an auto-reconnect) — use onState for UI banners instead if you
    *  only care about the user-visible state. */
