@@ -26,6 +26,10 @@ import { bearerToken } from "../auth/middleware";
 import type { OAuthProviderId } from "../auth/oauth-provider";
 import type { GoogleTokenStore } from "../auth/google-token.store";
 import type { FetchLike } from "../auth/oauth-provider";
+import {
+  GreytHrAuthError,
+  type GreytHrAuthService,
+} from "../auth/greythr/greythr-auth.service";
 
 /**
  * Optional Google Calendar connect deps. Present ONLY when GOOGLE_CLIENT_ID +
@@ -55,11 +59,20 @@ export interface GoogleCalendarConnectDeps {
   fetchImpl?: FetchLike;
 }
 
+/** greytHR login deps; present only when GREYTHR_LOGIN_ENABLED=true. */
+export interface GreytHrLoginDeps {
+  service: GreytHrAuthService;
+  /** Default subdomain advertised to the client login form (may be empty). */
+  subdomain: string;
+}
+
 export interface AuthRouterDeps {
   config: AuthConfig;
   users: UserRepository;
   /** Present only when Google Calendar is configured (else routes 404). */
   googleCalendar?: GoogleCalendarConnectDeps;
+  /** Present only when greytHR login is enabled (else /greythr/login 404s). */
+  greytHrLogin?: GreytHrLoginDeps;
 }
 
 function isProviderId(v: string): v is OAuthProviderId {
@@ -102,6 +115,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     mountGoogleCalendarRoutes(router, config, deps.googleCalendar);
   }
 
+  // --- greytHR ESS login (credentials -> our JWT) ------------------------
+  // Only mounted when greytHR login is enabled; otherwise the path 404s.
+  if (deps.greytHrLogin) {
+    mountGreytHrLoginRoutes(router, config, deps.greytHrLogin);
+  }
+
   // GET /api/auth/config --------------------------------------------------
   router.get("/config", (_req: Request, res: Response) => {
     res.json({
@@ -112,6 +131,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       authRequired: config.authRequired,
       defaultDepartment: config.defaultDepartment,
       departments: DEPARTMENTS,
+      // Advertise greytHR sign-in so the client renders its form (and the
+      // subdomain it should prefill). Absent integration => { enabled: false }.
+      greythr: deps.greytHrLogin
+        ? { enabled: true, subdomain: deps.greytHrLogin.subdomain }
+        : { enabled: false },
     });
   });
 
@@ -221,6 +245,57 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   });
 
   return router;
+}
+
+/** Mount POST /greythr/login (mint our JWT) and POST /greythr/logout. */
+function mountGreytHrLoginRoutes(
+  router: Router,
+  config: AuthConfig,
+  deps: GreytHrLoginDeps,
+): void {
+  router.post("/greythr/login", async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const loginId =
+      (typeof body.loginId === "string" && body.loginId.trim()) ||
+      (typeof body.username === "string" && body.username.trim()) ||
+      "";
+    const password = typeof body.password === "string" ? body.password : "";
+    const subdomain =
+      typeof body.subdomain === "string" && body.subdomain.trim()
+        ? body.subdomain.trim()
+        : deps.subdomain || undefined;
+
+    if (!loginId || !password) {
+      res.status(400).json({ error: "loginId and password are required" });
+      return;
+    }
+
+    try {
+      const { token, profile } = await deps.service.loginWithCredentials({
+        subdomain,
+        loginId,
+        password,
+      });
+      res.json({ token, profile });
+    } catch (err) {
+      if (err instanceof GreytHrAuthError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      res.status(502).json({ error: "greytHR sign-in failed" });
+    }
+  });
+
+  // POST /greythr/logout: end the caller's greytHR session (identity from the
+  // JWT). Idempotent — returns ok even without a valid token.
+  router.post("/greythr/logout", async (req: Request, res: Response) => {
+    const token = bearerToken(req);
+    const session = token ? config.jwt.tryVerify(token) : null;
+    if (session?.sub) {
+      await deps.service.logout(session.sub);
+    }
+    res.json({ ok: true });
+  });
 }
 
 /**

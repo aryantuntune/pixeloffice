@@ -31,6 +31,11 @@ export interface SessionClaims {
   email: string;
   name: string;
   role: Role;
+  /**
+   * Optional office department, set by IdPs that know it (e.g. greytHR). Used as
+   * the initial department; absent on the OAuth/dev paths.
+   */
+  department?: string;
 }
 
 /** What `verify()` returns: our claims plus standard registered claims. */
@@ -89,6 +94,8 @@ export class JwtService {
       email: claims.email,
       name: claims.name,
       role: claims.role,
+      // Included only when the IdP supplied a department (e.g. greytHR).
+      ...(typeof claims.department === "string" ? { department: claims.department } : {}),
     };
     return jwt.sign(payload, this.secret, {
       algorithm: SIGNING_ALGORITHM,
@@ -118,6 +125,7 @@ export class JwtService {
     const email = decoded.email;
     const name = decoded.name;
     const role = decoded.role;
+    const department = decoded.department;
 
     if (typeof sub !== "string" || sub.length === 0) {
       throw new Error("Invalid token: missing subject");
@@ -134,6 +142,7 @@ export class JwtService {
       email,
       name: typeof name === "string" ? name : "",
       role,
+      ...(typeof department === "string" ? { department } : {}),
       iat: typeof decoded.iat === "number" ? decoded.iat : 0,
       exp: typeof decoded.exp === "number" ? decoded.exp : 0,
     };
