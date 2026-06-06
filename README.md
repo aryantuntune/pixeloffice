@@ -1,8 +1,6 @@
 # PixelOffice
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-
-> Replace `OWNER/REPO` in the badge above with your GitHub org/repo once pushed.
+[![CI](https://github.com/aryantuntune/officegame/actions/workflows/ci.yml/badge.svg)](https://github.com/aryantuntune/officegame/actions/workflows/ci.yml)
 
 PixelOffice is a multiplayer virtual office inspired by Pokémon Emerald that helps
 distributed teams feel present, connected, and aware of each other's availability
@@ -12,6 +10,16 @@ who is available, who is in a meeting, and who is taking a coffee break. The tru
 product is **presence + meetings + social interaction + team awareness** — the map is
 just the visualization layer. There is no keystroke logging, mouse tracking, screenshot
 capture, or productivity scoring, ever.
+
+![The office](docs/screenshots/office.png)
+
+<p align="center">
+  <img src="docs/screenshots/login.png" width="49%" alt="Login screen" />
+  <img src="docs/screenshots/coffee-break.png" width="49%" alt="A coffee break in the Coffee Area" />
+</p>
+
+**Docs:** [Player Guide](docs/GAMEPLAY.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[Module Contract](CONTRACT.md) · [Product Constitution](plan.md)
 
 ---
 
