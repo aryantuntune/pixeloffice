@@ -38,7 +38,7 @@ contains business logic — they render server-pushed facts and forward explicit
 |---|---|
 | World Layer (rendering) | `client/src/game/` — Phaser scene, runtime-generated textures |
 | Presence Layer | `server/src/presence/` — pure engine + service |
-| Integration Layer | `server/src/integrations/` — calendar + GreytHR adapters; `server/src/auth/` — OAuth providers |
+| Integration Layer | `server/src/integrations/` — calendar, GreytHR (attendance), greytHR **ESS login** adapters; `server/src/auth/` — OAuth + greytHR auth providers |
 | Persistence Layer | `server/src/repositories/` + `server/src/persistence/` — Postgres/Redis behind interfaces, in-memory defaults |
 
 ## The wire protocol
@@ -60,6 +60,11 @@ Key flows:
   user clicks Join (`JOIN_MEETING`) — the human-agency rule.
 - **Events** → `EVENT_CREATED` broadcast + toast; `JOIN_EVENT` teleports *the sender
   only* to an area anchor and presence becomes `BREAK` via the `EVENT` source.
+- **Profile edits** → `UPDATE_PROFILE` (name/department/avatar) is validated, persisted to
+  the user record, and broadcast as `PLAYER_UPDATED`. It never moves the avatar
+  (human-agency rule). The client opens the editor on a double-click of the self avatar.
+- **Lounge games** → `JOIN_GAME` / `LEAVE_GAME` / `GAME_INPUT` drive server-authoritative
+  game state, rebroadcast as `GAME_UPDATE` (see [Lounge Games](lounge-games.md)).
 
 Abuse guards: per-session token buckets on MOVE/CHAT/actions, payload validation on every
 handler, REST rate limiting per IP (XFF only honored behind `TRUST_PROXY`).
@@ -133,8 +138,11 @@ meetings, never touch HR, and never impersonate conversation — ambience, not d
 
 ## Security model
 
-- OAuth only (Google/Microsoft) — password auth is constitutionally forbidden. The dev
-  login is an explicit stand-in behind the same `AuthProvider` interface.
+- Identity comes from external IdPs behind the same `AuthProvider` interface: Google/
+  Microsoft OAuth, or **greytHR sign-in** (the office login when enabled). PixelOffice
+  stores **no passwords** — for greytHR it forwards the credential once, server-to-server,
+  to the greytHR ESS client and keeps only the minted JWT. The dev login is an explicit
+  stand-in behind the same interface. (See [greytHR Sign-In](greythr-login-integration.md).)
 - JWT (HS256 pinned) with role-based access; `AUTH_REQUIRED=true` gates admin REST
   (401/403) and room joins. Admin role via `ADMIN_EMAILS`.
 - HR identity comes from the verified JWT (or the caller's own live session in dev) —
@@ -146,6 +154,6 @@ meetings, never touch HR, and never impersonate conversation — ambience, not d
 
 | Layer | What's covered |
 |---|---|
-| `npm test` (~210 tests) | presence transitions, JWT/RBAC/OAuth state, attendance state machine, GreytHR adapter (mocked fetch), NPC determinism, repositories, rate limiting, shutdown |
+| `npm test` (~250 tests) | presence transitions, JWT/RBAC/OAuth state, greytHR auth + department mapping, attendance state machine, GreytHR adapter (mocked fetch), NPC determinism, repositories, rate limiting, shutdown |
 | `npm run smoke` | live protocol: join → welcome → move echo → presence → event → teleport → meeting |
 | CI (GitHub Actions) | install → tests → client build → boot + smoke |

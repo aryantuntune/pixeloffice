@@ -11,8 +11,25 @@ Open the office, pick a name, and you're at your desk. Here's everything you can
    **avatar color**.
 3. **Enter Office** — you spawn at a free desk in your department's zone.
 
-> With OAuth configured you'll see "Sign in with Google / Microsoft" instead — same flow,
-> real identity.
+> **Signing in with greytHR.** When greytHR sign-in is enabled, the screen instead asks only
+> for your **Employee No / Login ID** and **password** (the company subdomain is filled in
+> for you), plus an avatar. Your **name and department come straight from greytHR** — there
+> is no name field, no department picker, and no guest option. Wrong department? Fix it from
+> your profile (below).
+>
+> With Google/Microsoft OAuth configured you'll see "Sign in with Google / Microsoft"
+> instead — same flow, real identity.
+
+## Editing your profile 🎨
+
+**Double-click your own avatar** to open the profile editor. You can change your:
+
+- **Display name**
+- **Department** — a simple dropdown (use this if greytHR put you in the wrong one)
+- **Avatar color & style** — the six color options
+
+Save and everyone sees the change instantly; it sticks across reconnects and future
+sessions. Editing your profile never moves your avatar.
 
 ## Moving around
 
@@ -70,6 +87,19 @@ Anyone with the Admin console can start a **Coffee Break**, **Tea Break**,
 Hit **Join** to appear in the venue (Coffee Area, Lounge, or Reception) with a ☕ Break
 status. **Leave** whenever you like — or it ends when the timer runs out. A couple of NPCs
 usually drift over too.
+
+## Lounge games 🎮
+
+The **Lounge** has three two-player mini-games for a quick break: **Ping-Pong**,
+**Tic-Tac-Toe**, and **Connect Four**.
+
+- Walk up to a game station (e.g. the ping-pong table) and press **E** to join.
+- The first player **waits**; the game starts when a second player joins the same station.
+- A game window opens — make your moves; the winner and score show at the end.
+- Close the window or press **Esc** to leave (your seat frees up for someone else).
+
+Games are just for fun: joining never moves your avatar elsewhere, and play never affects
+your presence, attendance, or any metric.
 
 ## Attendance (greytHR) 🕘
 
