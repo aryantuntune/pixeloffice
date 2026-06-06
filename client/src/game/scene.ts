@@ -18,6 +18,7 @@ import {
   buildOfficeMap,
   isWalkable,
   type Direction,
+  type FurnitureKind,
   type OfficeMap,
   type PlayerSnapshot,
 } from "@pixeloffice/shared";
@@ -39,7 +40,9 @@ import {
   animKey,
   buildAllTextures,
   floorTextureForArea,
+  floorVariantForTile,
   frameIndex,
+  furnitureFlickers,
   type SheetDir,
 } from "./textures";
 
@@ -59,8 +62,11 @@ function poseDirFor(dir: Direction): SheetDir {
 interface Avatar {
   snap: PlayerSnapshot;
   sprite: Phaser.GameObjects.Sprite;
+  shadow: Phaser.GameObjects.Image; // soft ellipse under the feet
   nameTag: Phaser.GameObjects.Text;
-  badge: Phaser.GameObjects.Text; // presence emoji floating above
+  badge: Phaser.GameObjects.Container; // presence icon on a dark pill
+  badgeBg: Phaser.GameObjects.Graphics;
+  badgeIcon: Phaser.GameObjects.Text;
   bubble?: Phaser.GameObjects.Container;
   bubbleTimer?: Phaser.Time.TimerEvent;
   /** In-flight grid step tween, if any (remote interpolation / local step). */
@@ -96,6 +102,9 @@ export class OfficeScene extends Phaser.Scene {
   /** While true the local avatar ignores keyboard (chat input focused). */
   private inputLocked = false;
   private lastArea = "Hallway";
+  /** Furniture pieces that flip between base/alt textures for a glow flicker. */
+  private flickerPieces: { img: Phaser.GameObjects.Image; kind: FurnitureKind }[] = [];
+  private flickerOn = false;
 
   constructor() {
     super({ key: "office" });
@@ -170,32 +179,46 @@ export class OfficeScene extends Phaser.Scene {
   // -------------------------------------------------------------------------
 
   private drawWorld(): void {
-    // Floors: paint each area's floor, hallway elsewhere.
+    // Floors: paint each area's floor, hallway elsewhere. Pick one of the
+    // deterministic variant tiles per position so large floors don't band.
     for (let y = 0; y < this.map.height; y++) {
       for (let x = 0; x < this.map.width; x++) {
         const area = areaAt(this.map, x, y);
-        const key = area
+        const base = area
           ? floorTextureForArea(area.type, area.department)
           : TEX.hallwayFloor;
+        const key = floorVariantForTile(base, x, y);
         const img = this.add.image(x * TILE, y * TILE, key).setOrigin(0, 0);
         img.setDepth(DEPTH_FLOOR);
       }
     }
 
-    // Area labels (subtle, centred at the top of each area).
+    // Area labels: pixel-font styling (caps, letter-spacing, outline).
     for (const a of this.map.areas) {
       const label = this.add.text(
         (a.x + a.w / 2) * TILE,
-        (a.y + 0.4) * TILE,
-        a.name,
-        { fontFamily: "monospace", fontSize: "13px", color: "#1d232c" },
+        (a.y + 0.45) * TILE,
+        a.name.toUpperCase(),
+        {
+          fontFamily: "monospace",
+          fontSize: "12px",
+          color: "#eef2f6",
+          stroke: "#11151b",
+          strokeThickness: 3,
+        },
       );
-      label.setOrigin(0.5, 0.5).setAlpha(0.5).setDepth(DEPTH_AREA_LABEL);
+      label.setLetterSpacing?.(2);
+      label.setOrigin(0.5, 0.5).setAlpha(0.62).setDepth(DEPTH_AREA_LABEL);
     }
 
-    // Walls.
+    // Walls. Outer north wall tiles (y === 0, excluding corners) deterministically
+    // become windows showing the sky — a few, not all, to keep it charming.
+    const lastX = this.map.width - 1;
     for (const w of this.map.walls) {
-      this.add.image(w.x * TILE, w.y * TILE, TEX.wall).setOrigin(0, 0).setDepth(DEPTH_WALL);
+      const northOuter = w.y === 0 && w.x > 1 && w.x < lastX - 1;
+      const isWindow = northOuter && (w.x * 7 + w.y * 13) % 3 === 0;
+      const tex = isWindow ? TEX.wallWindow : TEX.wall;
+      this.add.image(w.x * TILE, w.y * TILE, tex).setOrigin(0, 0).setDepth(DEPTH_WALL);
     }
 
     // Furniture (y-sorted so taller pieces overlap correctly).
@@ -207,7 +230,60 @@ export class OfficeScene extends Phaser.Scene {
         const footY = (f.y + f.h) * TILE;
         img.setDepth(DEPTH_ENTITY_BASE + footY);
       }
+      if (furnitureFlickers(f.kind)) this.flickerPieces.push({ img, kind: f.kind });
+      if (f.kind === "coffee-machine") this.spawnSteam(f.x, f.y);
     }
+
+    // Drive the cheap 2-frame glow flicker on a slow shared timer.
+    this.time.addEvent({
+      delay: 480,
+      loop: true,
+      callback: () => this.tickFlicker(),
+    });
+  }
+
+  /** Toggle glowing-screen / LED furniture between its base + alt texture. */
+  private tickFlicker(): void {
+    this.flickerOn = !this.flickerOn;
+    for (const f of this.flickerPieces) {
+      f.img.setTexture(this.flickerOn ? TEX.furnitureAlt(f.kind) : TEX.furniture(f.kind));
+    }
+  }
+
+  /** Tiny capped steam wisps rising from a coffee machine tile. */
+  private spawnSteam(fx: number, fy: number): void {
+    const x = fx * TILE + TILE / 2;
+    const y = fy * TILE - 2;
+    const emitter = this.add.particles(x, y, TEX.steam, {
+      speedY: { min: -14, max: -8 },
+      speedX: { min: -3, max: 3 },
+      lifespan: 1400,
+      frequency: 700, // capped + cheap: ~2 live wisps at a time
+      scale: { start: 0.9, end: 0.2 },
+      alpha: { start: 0.55, end: 0 },
+      quantity: 1,
+    });
+    emitter.setDepth(DEPTH_ENTITY_BASE + (fy + 1) * TILE + 2);
+  }
+
+  /** One-shot dust puff burst at a tile centre (teleport feedback). */
+  private dustPuff(tileX: number, tileY: number): void {
+    const x = tileX * TILE + TILE / 2;
+    const y = tileY * TILE + TILE / 2 + 6;
+    const emitter = this.add.particles(x, y, TEX.dust, {
+      speed: { min: 20, max: 50 },
+      angle: { min: 200, max: 340 },
+      lifespan: 420,
+      scale: { start: 1, end: 0.2 },
+      alpha: { start: 0.9, end: 0 },
+      gravityY: 30,
+      quantity: 8,
+      emitting: false,
+    });
+    emitter.setDepth(DEPTH_ENTITY_BASE + (tileY + 1) * TILE + 3);
+    emitter.explode(8);
+    // Free the emitter shortly after its particles die.
+    this.time.delayedCall(700, () => emitter.destroy());
   }
 
   // -------------------------------------------------------------------------
@@ -217,9 +293,14 @@ export class OfficeScene extends Phaser.Scene {
   private spawnAvatar(snap: PlayerSnapshot, isSelf: boolean): Avatar {
     const px = snap.x * TILE + TILE / 2;
     const py = snap.y * TILE + TILE / 2;
+
+    // Soft drop shadow sits just below the feet, under the sprite.
+    const shadow = this.add.image(px, py + 5, TEX.shadow);
+    shadow.setOrigin(0.5, 0.5);
+
     const sprite = this.add.sprite(px, py, TEX.avatarSheet(snap.avatarId));
     sprite.setOrigin(0.5, 0.75); // feet near the tile centre
-    sprite.setFrame(frameIndex(poseDirFor(snap.dir), "idle"));
+    sprite.setFrame(frameIndex(poseDirFor(snap.dir)));
 
     const nameTag = this.add.text(px, py - TILE * 0.95, isSelf ? `${snap.name} (you)` : snap.name, {
       fontFamily: "monospace",
@@ -230,34 +311,54 @@ export class OfficeScene extends Phaser.Scene {
     });
     nameTag.setOrigin(0.5, 1).setDepth(DEPTH_OVERLAY);
 
-    // Anchor the badge just past the name tag's right edge so it never overlaps.
-    const badge = this.add.text(px + nameTag.displayWidth / 2 + 7, py - TILE * 0.95, BADGE_FOR[snap.presence], {
-      fontSize: "13px",
-    });
-    badge.setOrigin(0.5, 1).setDepth(DEPTH_OVERLAY);
+    // Presence badge: an icon on a small dark pill for readability.
+    const badgeIcon = this.add.text(0, 0, BADGE_FOR[snap.presence], { fontSize: "12px" });
+    badgeIcon.setOrigin(0.5, 0.5);
+    const badgeBg = this.add.graphics();
+    const badge = this.add.container(px + nameTag.displayWidth / 2 + 10, py - TILE * 0.95 - 6, [badgeBg, badgeIcon]);
+    badge.setDepth(DEPTH_OVERLAY);
 
     const avatar: Avatar = {
       snap: { ...snap },
       sprite,
+      shadow,
       nameTag,
       badge,
+      badgeBg,
+      badgeIcon,
       presence: snap.presence,
       walking: false,
     };
+    this.drawBadgePill(avatar);
     this.avatars.set(snap.sessionId, avatar);
     this.applyDepth(avatar);
     this.applyPresenceAnim(avatar);
     return avatar;
   }
 
+  /** Redraw the dark pill behind the presence icon, or hide it when empty. */
+  private drawBadgePill(a: Avatar): void {
+    a.badgeBg.clear();
+    const icon = BADGE_FOR[a.presence];
+    a.badge.setVisible(icon !== "");
+    if (icon === "") return;
+    const w = a.badgeIcon.width + 8;
+    const h = a.badgeIcon.height + 4;
+    a.badgeBg.fillStyle(0x11151b, 0.78);
+    a.badgeBg.fillRoundedRect(-w / 2, -h / 2, w, h, h / 2);
+    a.badgeBg.lineStyle(1, 0x2a323d, 0.9);
+    a.badgeBg.strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2);
+  }
+
   private applyDepth(a: Avatar): void {
     a.sprite.setDepth(DEPTH_ENTITY_BASE + a.sprite.y);
+    a.shadow.setDepth(DEPTH_ENTITY_BASE + a.sprite.y - 1);
   }
 
   private applyFacing(a: Avatar): void {
     if (a.walking) return;
     a.sprite.anims.stop();
-    a.sprite.setFrame(frameIndex(poseDirFor(a.snap.dir), "idle"));
+    a.sprite.setFrame(frameIndex(poseDirFor(a.snap.dir)));
     this.applyPresenceAnim(a);
   }
 
@@ -271,8 +372,9 @@ export class OfficeScene extends Phaser.Scene {
   private moveTags(a: Avatar): void {
     const px = a.sprite.x;
     const py = a.sprite.y;
+    a.shadow.setPosition(px, py + 5);
     a.nameTag.setPosition(px, py - TILE * 0.95);
-    a.badge.setPosition(px + a.nameTag.displayWidth / 2 + 7, py - TILE * 0.95);
+    a.badge.setPosition(px + a.nameTag.displayWidth / 2 + 10, py - TILE * 0.95 - 6);
     if (a.bubble) a.bubble.setPosition(px, py - TILE * 1.35);
   }
 
@@ -373,8 +475,9 @@ export class OfficeScene extends Phaser.Scene {
     a.bubbleTimer?.remove();
     a.bubble?.destroy();
     a.sprite.destroy();
+    a.shadow.destroy();
     a.nameTag.destroy();
-    a.badge.destroy();
+    a.badge.destroy(); // destroys child graphics + icon
     this.avatars.delete(sessionId);
   }
 
@@ -427,9 +530,12 @@ export class OfficeScene extends Phaser.Scene {
     a.stepTween?.stop();
     a.stepTween = undefined;
     a.walking = false;
+    // Dust puff at the departure tile and the arrival tile for a "poof" feel.
+    this.dustPuff(a.snap.x, a.snap.y);
     a.snap.x = x;
     a.snap.y = y;
     this.placeInstant(a, x, y);
+    this.dustPuff(x, y);
     if (sessionId === this.selfId) {
       this.lastArea = "__force__";
       this.reportArea(a);
@@ -452,7 +558,8 @@ export class OfficeScene extends Phaser.Scene {
   private setPresenceBadge(a: Avatar, state: PresenceState): void {
     a.presence = state;
     a.snap.presence = state;
-    a.badge.setText(BADGE_FOR[state]);
+    a.badgeIcon.setText(BADGE_FOR[state]);
+    this.drawBadgePill(a);
   }
 
   apiShowBubble(sessionId: string, text: string): void {

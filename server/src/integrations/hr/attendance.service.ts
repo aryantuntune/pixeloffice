@@ -33,6 +33,20 @@ export interface AttendanceState {
   status: AttendanceStatus;
   /** Epoch ms of the last successful attendance action, or null. */
   lastActionAtMs: number | null;
+  /**
+   * Epoch ms of the last successful CHECK-IN, sourced from the ADAPTER result's
+   * `recordedAtMs`. On the real GreytHR path this is greytHR's accepted swipe
+   * time (the authoritative "when you checked in"); on the dev/mock path it is
+   * the mock's echoed server clock. null until the user has ever checked in.
+   *
+   * Sourced from the adapter result rather than greythr.adapter.ts's swipe
+   * history because that history query is tenant-specific and not reliably
+   * available; the timestamp GreytHR returns when it ACCEPTS our swipe is the
+   * reliable source. (See the "do not touch greythr.adapter.ts" note.)
+   */
+  lastCheckInMs: number | null;
+  /** Epoch ms of the last successful CHECK-OUT (adapter `recordedAtMs`), or null. */
+  lastCheckOutMs: number | null;
 }
 
 /** Payload emitted on the "attendance" event after a successful transition. */
@@ -63,6 +77,8 @@ export class AttendanceService extends EventEmitter {
         userId,
         status: "NOT_CHECKED_IN",
         lastActionAtMs: null,
+        lastCheckInMs: null,
+        lastCheckOutMs: null,
       }
     );
   }
@@ -146,9 +162,24 @@ export class AttendanceService extends EventEmitter {
     return employeeId;
   }
 
-  /** Mutate local state + emit. Only reached on a successful adapter call. */
+  /**
+   * Mutate local state + emit. Only reached on a successful adapter call.
+   *
+   * `atMs` is the adapter result's `recordedAtMs` (greytHR's accepted swipe time
+   * on the real path; the mock's echoed clock on the dev path). We record it
+   * into the direction-specific field (lastCheckInMs / lastCheckOutMs) AND the
+   * generic lastActionAtMs, carrying the opposite direction's timestamp forward
+   * so "checked in at" survives a later check-out and vice versa.
+   */
   private commit(userId: string, status: AttendanceStatus, atMs: number): void {
-    this.states.set(userId, { userId, status, lastActionAtMs: atMs });
+    const prev = this.getState(userId);
+    this.states.set(userId, {
+      userId,
+      status,
+      lastActionAtMs: atMs,
+      lastCheckInMs: status === "CHECKED_IN" ? atMs : prev.lastCheckInMs,
+      lastCheckOutMs: status === "CHECKED_OUT" ? atMs : prev.lastCheckOutMs,
+    });
     const change: AttendanceChange = { userId, status };
     this.emit("attendance", change);
   }

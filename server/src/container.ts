@@ -40,6 +40,8 @@ import {
 } from "./persistence/presence-store";
 import type { Database } from "./persistence/database";
 import type { RedisStore } from "./persistence/redis";
+import { buildOfficeMap } from "@pixeloffice/shared";
+import { NpcService, mulberry32, npcConfigFromEnv } from "./npcs/npc.service";
 import type { OfficeRoom } from "./rooms/office.room";
 
 // --- Synchronous, framework-free services (shared by REST + room) ----------
@@ -47,6 +49,14 @@ const mockCalendar = new MockCalendarAdapter();
 const calendar: CalendarAdapter = mockCalendar;
 const events = new EventService();
 const presence = new PresenceService(calendar, events);
+
+// --- Ambient NPCs (so the office never feels empty) ------------------------
+// Framework-free behavior engine. Owns a seeded PRNG (NPC_SEED, default 42) so
+// behavior is deterministic/testable; never reads the global clock or random.
+// NPC_COUNT (default 8, 0 disables, clamped to 16). The room calls spawnAll()
+// at create and tick() on its clock interval; effects become wire broadcasts.
+const npcConfig = npcConfigFromEnv(process.env);
+const npcs = new NpcService(buildOfficeMap(), mulberry32(npcConfig.seed), npcConfig.count);
 
 // --- Auth: JWT-aware provider in front of the dev provider -----------------
 // buildAuthConfig is the single env-reading entry point for auth. With no env
@@ -109,6 +119,8 @@ export const container = {
   calendar,
   events,
   presence,
+  /** Ambient office NPCs (framework-free; the room wires effects to the wire). */
+  npcs,
   auth,
   /** Auth config (providers map, jwt service, RBAC, AUTH_REQUIRED gate). */
   authConfig,

@@ -36,6 +36,11 @@ type AttendanceStatus = "NOT_CHECKED_IN" | "CHECKED_IN" | "CHECKED_OUT";
 interface StatusResponse {
   status: AttendanceStatus;
   lastActionAtMs: number | null;
+  /** Epoch ms the user last checked in (greytHR-accepted swipe time on the real
+   *  path; mock clock on dev). Absent when the user has never checked in. */
+  lastCheckInMs?: number;
+  /** Epoch ms the user last checked out. Absent when never checked out. */
+  lastCheckOutMs?: number;
   /** greytHR ESS portal deep link; present only when the real integration is on. */
   portalUrl?: string;
 }
@@ -57,6 +62,22 @@ const STATUS_COLOR: Record<AttendanceStatus, string> = {
   CHECKED_IN: "#3ecf6e",
   CHECKED_OUT: "#e8a13c",
 };
+
+// Local-time clock formatter (e.g. "9:42 AM") for the check-in/out lines. Built
+// once; the browser's locale/timezone decide 12h vs 24h. Falls back to a raw
+// locale string if the runtime lacks the formatter for some reason.
+const TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function formatTime(epochMs: number): string {
+  try {
+    return TIME_FORMAT.format(new Date(epochMs));
+  } catch {
+    return new Date(epochMs).toLocaleTimeString();
+  }
+}
 
 export interface AttendanceWidgetHandle {
   /** Re-query the server status (e.g. on reconnect). */
@@ -92,6 +113,28 @@ export function mountAttendance(
 
   statusRow.append(dot, statusText);
 
+  // Check-in / check-out times ("Checked in at 9:42 AM"). Each line is hidden
+  // until the server reports the corresponding timestamp. Minimal inline
+  // fallback styling keeps the widget compact and readable before any theme
+  // loads; the CSS artist can theme the `.attendance-time` class freely.
+  const times = document.createElement("div");
+  times.className = "attendance-times";
+
+  const checkInTime = document.createElement("div");
+  checkInTime.className = "attendance-time attendance-time-in";
+  checkInTime.hidden = true;
+  // Inline fallback (overridable by .attendance-time in styles.css):
+  checkInTime.style.fontSize = "12px";
+  checkInTime.style.opacity = "0.8";
+
+  const checkOutTime = document.createElement("div");
+  checkOutTime.className = "attendance-time attendance-time-out";
+  checkOutTime.hidden = true;
+  checkOutTime.style.fontSize = "12px";
+  checkOutTime.style.opacity = "0.8";
+
+  times.append(checkInTime, checkOutTime);
+
   const actions = document.createElement("div");
   actions.className = "attendance-actions";
 
@@ -120,7 +163,7 @@ export function mountAttendance(
   portalLink.rel = "noopener noreferrer";
   portalLink.hidden = true;
 
-  root.append(title, statusRow, actions, feedback, portalLink);
+  root.append(title, statusRow, times, actions, feedback, portalLink);
   container.appendChild(root);
 
   let current: AttendanceStatus = "NOT_CHECKED_IN";
@@ -137,6 +180,24 @@ export function mountAttendance(
     checkOutBtn.disabled = busy || current === "NOT_CHECKED_IN";
     checkInBtn.classList.toggle("is-current", current === "CHECKED_IN");
     checkOutBtn.classList.toggle("is-current", current === "CHECKED_OUT");
+  }
+
+  /** Show/hide the check-in/out time lines from the server's timestamps. */
+  function renderTimes(checkInMs?: number, checkOutMs?: number): void {
+    if (typeof checkInMs === "number") {
+      checkInTime.textContent = `Checked in at ${formatTime(checkInMs)}`;
+      checkInTime.hidden = false;
+    } else {
+      checkInTime.textContent = "";
+      checkInTime.hidden = true;
+    }
+    if (typeof checkOutMs === "number") {
+      checkOutTime.textContent = `Checked out at ${formatTime(checkOutMs)}`;
+      checkOutTime.hidden = false;
+    } else {
+      checkOutTime.textContent = "";
+      checkOutTime.hidden = true;
+    }
   }
 
   function showFeedback(message: string, kind: "ok" | "error"): void {
@@ -166,6 +227,8 @@ export function mountAttendance(
       }
       const data = (await res.json()) as StatusResponse;
       current = data.status;
+      // Surface WHEN the user checked in/out (hidden when the server omits them).
+      renderTimes(data.lastCheckInMs, data.lastCheckOutMs);
       // Reveal the portal deep link only when the server supplies one.
       if (data.portalUrl) {
         portalLink.href = data.portalUrl;
@@ -198,6 +261,9 @@ export function mountAttendance(
       if (res.ok && data?.ok) {
         current = data.status;
         showFeedback(kind === "check-in" ? "Checked in." : "Checked out.", "ok");
+        // Re-query so the newly recorded check-in/out time line appears (the
+        // action response intentionally carries only ok/status/reason).
+        void refresh();
       } else {
         showFeedback(data?.reason ?? "HR action failed. Try again later.", "error");
       }

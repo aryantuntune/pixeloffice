@@ -47,6 +47,7 @@ import { container } from "../container";
 import { createLogger } from "../logging/logger";
 import { TokenBucket } from "../http/rate-limit";
 import { SlotAllocator } from "./slot-allocator";
+import type { NpcEffect } from "../npcs/npc.service";
 
 const log = createLogger("room");
 
@@ -117,12 +118,72 @@ export class OfficeRoom extends Room {
     this.wireServiceListeners();
     this.registerMessageHandlers();
 
+    // Spawn ambient NPCs so the office never feels empty. They are inserted
+    // directly into the authoritative player map BEFORE any client joins, so
+    // WELCOME naturally includes them (carrying isNpc=true) — no join broadcast
+    // is needed at create. They are server-driven ambience: they never join
+    // meetings, never touch HR, and never respond to humans.
+    for (const snap of container.npcs.spawnAll(Date.now())) {
+      this.players.set(snap.sessionId, snap);
+    }
+
     // The room is the ONLY clock reader. Services get `now` from here.
     this.clock.setInterval(() => {
       const now = Date.now();
       container.presence.tick(now);
       container.events.tick(now);
+      // Advance ambient NPCs and translate their effects to wire messages. The
+      // NPC service is framework-free; the room is the only Colyseus seam.
+      this.applyNpcEffects(container.npcs.tick(now, container.events.activeEvents(now)));
     }, TICK_MS);
+  }
+
+  /**
+   * Translate framework-free NPC effects into authoritative-snapshot updates +
+   * wire broadcasts. NPCs are not real clients, so there is no `except` target —
+   * every connected human should see them move/change presence/chat.
+   */
+  private applyNpcEffects(effects: NpcEffect[]): void {
+    for (const effect of effects) {
+      const snap = this.players.get(effect.sessionId);
+      if (!snap || !snap.isNpc) continue; // only ever mutate NPC snapshots here
+      switch (effect.kind) {
+        case "move": {
+          snap.x = effect.x;
+          snap.y = effect.y;
+          snap.dir = effect.dir;
+          const moved: PlayerMovedPayload = {
+            sessionId: effect.sessionId,
+            x: effect.x,
+            y: effect.y,
+            dir: effect.dir,
+            moving: effect.moving,
+          };
+          this.broadcast(S2C.PLAYER_MOVED, moved);
+          break;
+        }
+        case "presence": {
+          snap.presence = effect.state;
+          snap.source = effect.source;
+          const payload: PresencePayload = {
+            sessionId: effect.sessionId,
+            state: effect.state,
+            source: effect.source,
+          };
+          this.broadcast(S2C.PRESENCE, payload);
+          break;
+        }
+        case "chat": {
+          const out: ChatBroadcastPayload = {
+            sessionId: effect.sessionId,
+            name: effect.name,
+            text: effect.text,
+          };
+          this.broadcast(S2C.CHAT, out);
+          break;
+        }
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -140,8 +201,11 @@ export class OfficeRoom extends Room {
     this.onPresenceChange = ({ sessionId, state, source }) => {
       const snap = this.players.get(sessionId);
       // Only react to sessions THIS room owns. A change for a session another
-      // room owns must never be persisted or rebroadcast here.
-      if (!snap) return;
+      // room owns must never be persisted or rebroadcast here. NPC snapshots
+      // live in this.players too, but their presence is driven exclusively by
+      // the NPC service (NPCs are never tracked by the presence service), so
+      // guard against ever mutating/persisting an NPC via the human path.
+      if (!snap || snap.isNpc) return;
       snap.presence = state;
       snap.source = source;
       // Best-effort persist the LATEST presence (no-op for the in-memory

@@ -1,20 +1,37 @@
 /* ---------------------------------------------------------------------------
-   PixelOffice — dark pixel-office aesthetic. Monospace, no Tailwind (lean deps).
-   The game canvas fills the viewport; the HUD is a pointer-events-transparent
-   overlay whose interactive children re-enable pointer events.
+   PixelOffice — "GBA game meets modern SaaS". Dark navy theme, monospace stack,
+   no external fonts or assets. The game canvas fills the viewport; the HUD is a
+   pointer-events-transparent overlay whose interactive children re-enable clicks.
 --------------------------------------------------------------------------- */
 
 :root {
   --bg: #0e1116;
   --panel: #161c24;
   --panel-2: #1d2530;
+  --panel-3: #232d3a;
   --border: #2a3340;
+  --border-soft: #222a35;
   --text: #e6ecf2;
   --muted: #9aa6b4;
   --accent: #3ecf6e;
   --accent-2: #2e6fd8;
   --shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.55);
+
+  /* Department chip tints — matched 1:1 to the in-game carpet tints
+     (client/src/game/constants.ts DEPARTMENT_FLOOR). */
+  --dept-engineering: #9fb6c9; /* steel-blue */
+  --dept-product: #c2a9b8;     /* mauve      */
+  --dept-design: #aecaa6;      /* sage       */
+  --dept-hr: #cabf9c;          /* tan        */
+
+  /* The pixel-shadow offset for the wordmark treatment. */
+  --pixel-shadow: 2px 2px 0 #0a0d12, 4px 4px 0 rgba(46, 111, 216, 0.35);
+
   --font: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 * {
@@ -29,6 +46,38 @@ body {
   color: var(--text);
   font-family: var(--font);
   overflow: hidden;
+}
+
+/* Consistent focus treatment everywhere — only when keyboard-navigating. */
+:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+#hud-root *:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Styled scrollbars (WebKit + Firefox). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4655;
+  background-clip: padding-box;
 }
 
 #game-root {
@@ -54,6 +103,7 @@ body {
 #hud-root input,
 #hud-root select,
 #hud-root textarea,
+#hud-root a,
 #hud-root .hud-panel,
 #hud-root .admin-backdrop,
 #hud-root .toast {
@@ -68,6 +118,32 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* Panel slide-in on boot. Each region eases in from its own edge. */
+.hud-layer .hud-topbar {
+  animation: slide-down 0.5s var(--ease) both;
+}
+.hud-layer .hud-sidebar {
+  animation: slide-right 0.55s var(--ease) both;
+  animation-delay: 0.06s;
+}
+.hud-layer .hud-chat {
+  animation: slide-up 0.55s var(--ease) both;
+  animation-delay: 0.1s;
+}
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-right {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
 /* ----------------------------- Top bar ---------------------------------- */
@@ -85,22 +161,24 @@ body {
 .hud-logo {
   font-weight: 700;
   font-size: 18px;
-  letter-spacing: 1px;
+  letter-spacing: 1.5px;
   color: var(--accent);
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
-  background: rgba(14, 17, 22, 0.7);
-  padding: 6px 12px;
-  border-radius: 8px;
+  text-shadow: 1px 1px 0 #0a0d12, 2px 2px 0 rgba(0, 0, 0, 0.5);
+  background: linear-gradient(180deg, rgba(20, 26, 34, 0.85), rgba(14, 17, 22, 0.85));
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .hud-area {
   background: rgba(14, 17, 22, 0.7);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
   font-size: 13px;
   color: var(--muted);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .hud-status {
@@ -108,18 +186,29 @@ body {
   margin-left: auto;
 }
 
+/* Status pill: tinted toward the presence color (~12% alpha) — not just the dot. */
 .hud-status-pill {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--panel);
-  border: 1px solid var(--pill-color, var(--border));
+  background: color-mix(in srgb, var(--pill-color, var(--accent-2)) 12%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--pill-color, var(--border)) 55%, var(--border));
   color: var(--text);
   border-radius: 999px;
   padding: 7px 14px;
   font-family: var(--font);
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 0.12s var(--ease), background 0.18s ease, border-color 0.18s ease;
+}
+.hud-status-pill:hover {
+  background: color-mix(in srgb, var(--pill-color, var(--accent-2)) 20%, var(--panel));
+  transform: translateY(-1px);
+}
+.hud-status-pill:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .hud-caret {
@@ -129,14 +218,20 @@ body {
 
 .hud-status-menu {
   position: absolute;
-  top: 110%;
+  top: 112%;
   right: 0;
-  min-width: 160px;
+  min-width: 168px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 6px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
+  animation: menu-pop 0.14s var(--ease) both;
+}
+
+@keyframes menu-pop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .hud-status-item {
@@ -153,43 +248,62 @@ body {
   font-size: 13px;
   cursor: pointer;
   text-align: left;
+  transition: background 0.12s ease;
 }
 
 .hud-status-item:hover {
   background: var(--panel-2);
 }
+.hud-status-item:active {
+  background: var(--panel-3);
+}
 
 .hud-meeting-btn {
-  background: #e5544b;
+  background: linear-gradient(180deg, #ef6258, #e5544b);
   color: #fff;
   border: 1px solid #b53b34;
   border-radius: 999px;
   padding: 8px 16px;
   font-family: var(--font);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   cursor: pointer;
   box-shadow: var(--shadow);
+  transition: transform 0.12s var(--ease), filter 0.15s ease;
+}
+.hud-meeting-btn:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+.hud-meeting-btn:active {
+  transform: translateY(0) scale(0.97);
 }
 
 .hud-meeting-btn.joined {
   background: var(--panel-2);
   color: var(--muted);
   border-color: var(--border);
-  cursor: default;
+  cursor: pointer;
+  box-shadow: none;
+}
+.hud-meeting-btn.joined:hover {
+  filter: none;
+  background: var(--panel-3);
+  color: var(--text);
 }
 
 .hud-meeting-btn.pulse {
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(229, 84, 75, 0.5);
+    box-shadow: 0 0 0 0 rgba(229, 84, 75, 0.55), var(--shadow);
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(229, 84, 75, 0);
+    box-shadow: 0 0 0 10px rgba(229, 84, 75, 0), var(--shadow);
   }
 }
 
@@ -199,22 +313,24 @@ body {
   position: absolute;
   top: 64px;
   right: 12px;
-  width: 256px;
+  width: 264px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   max-height: calc(100vh - 90px);
 }
 
+/* One consistent panel recipe: radius / border / blur / soft top-light. */
 .hud-panel {
-  background: rgba(22, 28, 36, 0.92);
+  background: linear-gradient(180deg, rgba(26, 33, 43, 0.94), rgba(20, 26, 34, 0.94));
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   display: flex;
   flex-direction: column;
   min-height: 0;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .hud-roster {
@@ -223,12 +339,12 @@ body {
 
 .hud-panel-title {
   margin: 0;
-  padding: 10px 14px;
-  font-size: 12px;
+  padding: 11px 14px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 1.4px;
   color: var(--muted);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .hud-panel-body {
@@ -237,12 +353,13 @@ body {
 }
 
 .presence-dot {
+  position: relative;
   display: inline-block;
   width: 9px;
   height: 9px;
   border-radius: 50%;
   flex: 0 0 auto;
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25), 0 0 6px 0 currentColor;
 }
 
 .roster-group {
@@ -254,82 +371,164 @@ body {
   align-items: center;
   gap: 7px;
   font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
   color: var(--muted);
-  padding: 4px 6px;
+  padding: 6px 6px 4px;
 }
 
 .roster-row {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  transition: background 0.12s ease, transform 0.12s ease;
 }
 
 .roster-row:hover {
   background: var(--panel-2);
+  transform: translateX(-2px);
+}
+
+/* Ambient office NPCs: slightly dimmed so real teammates read first. */
+.roster-row[data-npc="true"] {
+  opacity: 0.62;
+}
+.roster-row[data-npc="true"]:hover {
+  opacity: 0.85;
 }
 
 .roster-info {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .roster-name {
   font-size: 13px;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .roster-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--muted);
+  margin-top: 2px;
 }
+
+.roster-area {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Department chip — colored to match the in-game carpet tint of that dept. */
+.dept-chip {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #0e1116;
+  background: var(--chip-color, var(--muted));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+.dept-chip[data-dept="Engineering"] { --chip-color: var(--dept-engineering); }
+.dept-chip[data-dept="Product"]     { --chip-color: var(--dept-product); }
+.dept-chip[data-dept="Design"]      { --chip-color: var(--dept-design); }
+.dept-chip[data-dept="HR"]          { --chip-color: var(--dept-hr); }
 
 .hud-empty {
   font-size: 12px;
   color: var(--muted);
-  padding: 10px;
+  padding: 14px 10px;
   text-align: center;
+  opacity: 0.85;
 }
 
 /* ----------------------------- Events ----------------------------------- */
 
 .event-card {
+  position: relative;
   background: var(--panel-2);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--event-accent, var(--accent-2));
   border-radius: 9px;
-  padding: 9px 10px;
+  padding: 9px 10px 11px;
   margin-bottom: 8px;
+  overflow: hidden;
+  transition: transform 0.12s var(--ease), border-color 0.15s ease;
 }
+.event-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--border);
+  border-left-color: var(--event-accent, var(--accent-2));
+}
+
+/* Per-type left accent bar color (matches toast kind colors). */
+.event-card[data-type="COFFEE_BREAK"]   { --event-accent: #e8a13c; }
+.event-card[data-type="TEA_BREAK"]      { --event-accent: #4bb89c; }
+.event-card[data-type="TEAM_GATHERING"] { --event-accent: #8e44ad; }
+.event-card[data-type="TOWN_HALL"]      { --event-accent: #2e6fd8; }
 
 .event-head {
   display: flex;
   align-items: center;
   gap: 7px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .event-meta {
   font-size: 11px;
   color: var(--muted);
-  margin: 5px 0 8px;
+  margin: 5px 0 9px;
+}
+
+/* Thin time-remaining progress bar across the bottom of the card. */
+.event-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: -3px 0 9px;
+  overflow: hidden;
+}
+.event-progress > i {
+  display: block;
+  height: 100%;
+  width: var(--progress, 100%);
+  background: var(--event-accent, var(--accent-2));
+  border-radius: 999px;
+  transition: width 0.6s linear;
 }
 
 .event-btn {
   width: 100%;
   border: none;
   border-radius: 7px;
-  padding: 6px;
+  padding: 7px;
   font-family: var(--font);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   cursor: pointer;
+  transition: transform 0.1s var(--ease), filter 0.15s ease;
+}
+.event-btn:hover {
+  filter: brightness(1.08);
+}
+.event-btn:active {
+  transform: scale(0.97);
 }
 
 .event-btn.join {
-  background: var(--accent);
+  background: linear-gradient(180deg, #4ad97d, #3ecf6e);
   color: #08210f;
 }
 
@@ -337,6 +536,11 @@ body {
   background: var(--panel);
   color: var(--muted);
   border: 1px solid var(--border);
+}
+.event-btn.leave:hover {
+  color: var(--text);
+  filter: none;
+  background: var(--panel-3);
 }
 
 /* ------------------------------ Chat ------------------------------------ */
@@ -351,18 +555,27 @@ body {
 
 .hud-chat-input {
   width: 100%;
-  background: rgba(22, 28, 36, 0.92);
+  background: rgba(22, 28, 36, 0.94);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 10px 16px;
+  padding: 11px 16px;
   color: var(--text);
   font-family: var(--font);
   font-size: 13px;
   outline: none;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hud-chat-input::placeholder {
+  color: var(--muted);
 }
 
 .hud-chat-input:focus {
   border-color: var(--accent-2);
+  box-shadow: var(--shadow), 0 0 0 3px rgba(46, 111, 216, 0.2);
 }
 
 /* ----------------------------- Toasts ----------------------------------- */
@@ -382,34 +595,37 @@ body {
 .toast {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   min-width: 220px;
   max-width: 380px;
-  background: var(--panel);
+  background: linear-gradient(180deg, rgba(26, 33, 43, 0.97), rgba(20, 26, 34, 0.97));
   border: 1px solid var(--border);
   border-left: 4px solid var(--toast-accent, var(--accent-2));
   border-radius: 9px;
-  padding: 10px 14px;
+  padding: 11px 14px;
   font-size: 13px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   opacity: 0;
-  transform: translateY(-8px);
-  transition: opacity 0.22s ease, transform 0.22s ease;
+  transform: translateY(-10px) scale(0.98);
+  transition: opacity 0.22s ease, transform 0.22s var(--ease);
   cursor: pointer;
 }
 
 .toast-in {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
 }
 
 .toast-out {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-10px) scale(0.98);
 }
 
 .toast-icon {
   flex: 0 0 auto;
+  filter: drop-shadow(0 0 6px var(--toast-accent, transparent));
 }
 
 .toast-text {
@@ -425,32 +641,90 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(1200px 700px at 50% 30%, #16202c 0%, #0a0d12 70%);
+  background: radial-gradient(1200px 700px at 50% 28%, #16202c 0%, #0a0d12 72%);
+  overflow: hidden;
+}
+
+/* Animated pixel-grid background — pure CSS, slowly scrolling. */
+#login-root::before {
+  content: "";
+  position: absolute;
+  inset: -40px;
+  background-image:
+    linear-gradient(rgba(62, 207, 110, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 111, 216, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+  animation: grid-scroll 18s linear infinite;
+  pointer-events: none;
+}
+
+/* A soft gradient shimmer sweeping behind the card. */
+#login-root::after {
+  content: "";
+  position: absolute;
+  width: 140vmax;
+  height: 140vmax;
+  top: 50%;
+  left: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(46, 111, 216, 0.08) 70deg,
+    transparent 140deg,
+    rgba(62, 207, 110, 0.07) 220deg,
+    transparent 300deg
+  );
+  transform: translate(-50%, -50%);
+  animation: shimmer-spin 26s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes grid-scroll {
+  from { transform: translate(0, 0); }
+  to   { transform: translate(32px, 32px); }
+}
+@keyframes shimmer-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to   { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
 .login-card {
+  position: relative;
+  z-index: 1;
   width: 360px;
   max-width: 92vw;
-  background: var(--panel);
+  background: linear-gradient(180deg, rgba(24, 30, 39, 0.96), rgba(18, 23, 30, 0.96));
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 28px;
-  box-shadow: var(--shadow);
+  border-radius: 18px;
+  padding: 30px 28px;
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: card-rise 0.5s var(--ease) both;
 }
 
+@keyframes card-rise {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* The PixelOffice wordmark with a pixel-shadow treatment. */
 .login-title {
   margin: 0;
-  font-size: 28px;
-  letter-spacing: 1px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 2px;
   color: var(--accent);
   text-align: center;
+  text-shadow: var(--pixel-shadow);
 }
 
 .login-subtitle {
-  margin: 4px 0 22px;
+  margin: 8px 0 24px;
   text-align: center;
   color: var(--muted);
   font-size: 13px;
+  letter-spacing: 0.3px;
 }
 
 .login-form {
@@ -463,10 +737,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
 }
 
 .login-input,
@@ -474,16 +748,22 @@ body {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 9px;
-  padding: 10px 12px;
+  padding: 11px 12px;
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
   outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login-input::placeholder {
+  color: var(--muted);
 }
 
 .login-input:focus,
 .login-select:focus {
   border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(46, 111, 216, 0.2);
 }
 
 .login-swatches {
@@ -493,17 +773,35 @@ body {
 }
 
 .login-swatch {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 9px;
   border: 2px solid transparent;
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.3);
+  transition: transform 0.14s var(--ease), box-shadow 0.15s ease;
 }
 
+.login-swatch:hover {
+  transform: translateY(-2px) scale(1.06);
+}
+.login-swatch:active {
+  transform: translateY(0) scale(0.96);
+}
+
+/* Selected swatch pops with a bounce + ring. */
 .login-swatch.selected {
   border-color: #fff;
-  box-shadow: 0 0 0 2px var(--accent-2);
+  box-shadow: 0 0 0 2px var(--accent-2), 0 4px 12px rgba(46, 111, 216, 0.4);
+  animation: swatch-bounce 0.4s var(--ease);
+}
+
+@keyframes swatch-bounce {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.22) translateY(-3px); }
+  70%  { transform: scale(0.94); }
+  100% { transform: scale(1); }
 }
 
 .login-error {
@@ -513,16 +811,29 @@ body {
 }
 
 .login-submit {
-  background: var(--accent);
+  background: linear-gradient(180deg, #4ad97d, var(--accent));
   color: #07200f;
   border: none;
   border-radius: 10px;
-  padding: 12px;
+  padding: 13px;
   font-family: var(--font);
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: 0.5px;
   cursor: pointer;
   margin-top: 4px;
+  box-shadow: 0 6px 16px rgba(62, 207, 110, 0.25);
+  transition: transform 0.12s var(--ease), filter 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login-submit:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(62, 207, 110, 0.3);
+}
+.login-submit:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: 0 3px 10px rgba(62, 207, 110, 0.25);
 }
 
 .login-submit:disabled {
@@ -531,7 +842,7 @@ body {
 }
 
 .login-footer {
-  margin: 18px 0 0;
+  margin: 20px 0 0;
   text-align: center;
   font-size: 11px;
   color: var(--muted);
@@ -550,8 +861,17 @@ body {
   padding: 9px 14px;
   font-family: var(--font);
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   box-shadow: var(--shadow);
+  transition: transform 0.12s var(--ease), background 0.15s ease;
+}
+.admin-trigger:hover {
+  background: var(--panel-2);
+  transform: translateY(-1px);
+}
+.admin-trigger:active {
+  transform: translateY(0) scale(0.97);
 }
 
 /* The hidden attribute's UA display:none loses to our display:flex — restore it. */
@@ -562,11 +882,19 @@ body {
 .admin-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(5, 7, 10, 0.6);
+  background: rgba(5, 7, 10, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 60;
+  animation: fade-in 0.18s ease both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .admin-modal {
@@ -574,10 +902,11 @@ body {
   max-width: 94vw;
   max-height: 88vh;
   overflow: auto;
-  background: var(--panel);
+  background: linear-gradient(180deg, rgba(24, 30, 39, 0.98), rgba(18, 23, 30, 0.98));
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
+  animation: card-rise 0.22s var(--ease) both;
 }
 
 .admin-header {
@@ -585,12 +914,13 @@ body {
   align-items: center;
   gap: 10px;
   padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .admin-header h2 {
   margin: 0;
   font-size: 18px;
+  letter-spacing: 0.5px;
 }
 
 .admin-note {
@@ -605,12 +935,20 @@ body {
   color: var(--muted);
   font-size: 16px;
   cursor: pointer;
+  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.admin-close:hover {
+  background: var(--panel-2);
+  color: var(--text);
 }
 
 .admin-tabs {
   display: flex;
   gap: 4px;
-  padding: 10px 14px 0;
+  padding: 12px 14px 0;
 }
 
 .admin-tab {
@@ -622,7 +960,13 @@ body {
   border-radius: 9px 9px 0 0;
   font-family: var(--font);
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.admin-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .admin-tab.active {
@@ -660,12 +1004,14 @@ body {
   font-family: var(--font);
   font-size: 14px;
   outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .admin-field input:focus,
 .admin-field select:focus,
 .admin-field textarea:focus {
   border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(46, 111, 216, 0.18);
 }
 
 .admin-check {
@@ -681,12 +1027,22 @@ body {
   color: #fff;
   border: none;
   border-radius: 9px;
-  padding: 10px 14px;
+  padding: 10px 16px;
   font-family: var(--font);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   cursor: pointer;
   align-self: flex-start;
+  box-shadow: 0 4px 12px rgba(46, 111, 216, 0.25);
+  transition: transform 0.12s var(--ease), filter 0.15s ease;
+}
+.admin-submit:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+.admin-submit:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .admin-status {
@@ -716,15 +1072,23 @@ body {
 .admin-users-table th,
 .admin-users-table td {
   text-align: left;
-  padding: 7px 9px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.admin-users-table tbody tr {
+  transition: background 0.1s ease;
+}
+.admin-users-table tbody tr:hover {
+  background: var(--panel-2);
 }
 
 .admin-users-table th {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 700;
   font-size: 11px;
   text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -807,7 +1171,7 @@ body {
   position: absolute;
   left: 12px;
   bottom: 64px;
-  width: 256px;
+  width: 264px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -833,6 +1197,7 @@ body {
   border-radius: 50%;
   background: #9aa3ad;
   flex: 0 0 auto;
+  box-shadow: 0 0 6px 0 currentColor;
 }
 
 .attendance-actions {
@@ -842,13 +1207,23 @@ body {
 
 .attendance-btn {
   flex: 1;
-  padding: 6px 8px;
+  padding: 7px 8px;
   cursor: pointer;
   font: inherit;
+  font-weight: 600;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--panel-2);
   color: var(--text);
+  transition: background 0.12s ease, transform 0.1s var(--ease), border-color 0.12s ease;
+}
+
+.attendance-btn:hover:not(:disabled) {
+  background: var(--panel-3);
+  transform: translateY(-1px);
+}
+.attendance-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
 }
 
 .attendance-btn:disabled {
@@ -858,6 +1233,7 @@ body {
 
 .attendance-btn.is-current {
   border-color: var(--accent);
+  color: var(--accent);
 }
 
 .attendance-feedback {
@@ -883,4 +1259,26 @@ body {
 
 .attendance-portal-link:hover {
   text-decoration: underline;
+}
+
+/* Theme the attendance time readout if present (kept in sync with the widget). */
+.attendance-time {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion: honor the user's OS preference — strip all non-essential
+   animation/transition while keeping the layout and final states intact.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

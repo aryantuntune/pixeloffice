@@ -181,6 +181,44 @@ describe("HR routes — dev path (no auth)", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).not.toHaveProperty("portalUrl");
   });
+
+  it("omits check-in/out times before any action", async () => {
+    const res = await fetch(`${base}/api/hr/status?sessionId=alice-session`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("lastCheckInMs");
+    expect(body).not.toHaveProperty("lastCheckOutMs");
+  });
+
+  it("includes lastCheckInMs after a check-in (sourced from the adapter)", async () => {
+    await fetch(`${base}/api/hr/check-in`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "alice-session" }),
+    });
+    const res = await fetch(`${base}/api/hr/status?sessionId=alice-session`);
+    const body = (await res.json()) as { lastCheckInMs?: number; lastCheckOutMs?: number };
+    // The mock echoes the route clock (now: () => 1000).
+    expect(body.lastCheckInMs).toBe(1000);
+    expect(body).not.toHaveProperty("lastCheckOutMs");
+  });
+
+  it("includes both times after a check-in then check-out, preserving the check-in time", async () => {
+    await fetch(`${base}/api/hr/check-in`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "alice-session" }),
+    });
+    await fetch(`${base}/api/hr/check-out`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: "alice-session" }),
+    });
+    const res = await fetch(`${base}/api/hr/status?sessionId=alice-session`);
+    const body = (await res.json()) as { lastCheckInMs?: number; lastCheckOutMs?: number };
+    expect(body.lastCheckInMs).toBe(1000);
+    expect(body.lastCheckOutMs).toBe(1000);
+  });
 });
 
 describe("HR routes — portalUrl surfaced when configured", () => {

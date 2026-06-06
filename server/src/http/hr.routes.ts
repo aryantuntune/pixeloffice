@@ -132,6 +132,12 @@ export function createHrRouter(deps: HrRouterDeps): Router {
       userId: user.userId,
       status,
       lastActionAtMs: state.lastActionAtMs,
+      // WHEN the user checked in / out, sourced from the attendance service's
+      // adapter-recorded timestamps (greytHR's accepted swipe time on the real
+      // path; mock clock on dev). Absent when unknown so the widget hides the
+      // corresponding line. The widget renders e.g. "Checked in at 9:42 AM".
+      ...(state.lastCheckInMs != null ? { lastCheckInMs: state.lastCheckInMs } : {}),
+      ...(state.lastCheckOutMs != null ? { lastCheckOutMs: state.lastCheckOutMs } : {}),
       // Only present when the real GreytHR integration is configured; the widget
       // renders an "Open greytHR" deep link iff this is present.
       ...(deps.portalUrl ? { portalUrl: deps.portalUrl } : {}),

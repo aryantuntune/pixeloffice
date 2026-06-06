@@ -73,6 +73,10 @@ export function createAdminRouter(): Router {
         presence: p.presence,
         source: p.source,
         area: area ? area.name : "Hallway",
+        // Surface ambient NPCs so admin tooling can distinguish them from real
+        // users. Omitted (not false) for humans to keep the shape minimal and
+        // backward-compatible.
+        ...(p.isNpc ? { isNpc: true } : {}),
       };
     });
     res.json({ users });

@@ -271,6 +271,9 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
       for (const p of bucket) {
         const row = document.createElement("div");
         row.className = "roster-row";
+        // Mark ambient NPCs so the stylesheet can dim them (display-only; NPCs
+        // render identically in-game). Backward-compatible: humans have no flag.
+        if (p.isNpc) row.dataset.npc = "true";
         const dot = document.createElement("span");
         dot.className = "presence-dot";
         dot.style.background = PRESENCE_META[p.presence].color;
@@ -281,7 +284,14 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
         nameEl.textContent = p.sessionId === state.selfId ? `${p.name} (you)` : p.name;
         const sub = document.createElement("div");
         sub.className = "roster-sub";
-        sub.textContent = `${p.department} · ${areaNameFor(p)}`;
+        const chip = document.createElement("span");
+        chip.className = "dept-chip";
+        chip.dataset.dept = p.department;
+        chip.textContent = p.department;
+        const area = document.createElement("span");
+        area.className = "roster-area";
+        area.textContent = areaNameFor(p);
+        sub.append(chip, area);
         info.append(nameEl, sub);
         row.append(dot, info);
         groupEl.appendChild(row);
@@ -315,6 +325,7 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   function renderEventCard(ev: SocialEvent, selfId: string): HTMLElement {
     const card = document.createElement("div");
     card.className = "event-card";
+    card.dataset.type = ev.type;
     const head = document.createElement("div");
     head.className = "event-head";
     const emoji = document.createElement("span");
@@ -329,6 +340,16 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
     meta.className = "event-meta";
     meta.textContent = `${ev.areaName} · ${timeLeftLabel(ev.endTime)} · ${ev.participantIds.length} joined`;
 
+    // Thin time-remaining progress bar (display only; clamped to 0..1).
+    const total = ev.endTime - ev.startTime;
+    const remaining = ev.endTime - Date.now();
+    const frac = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
+    const progress = document.createElement("div");
+    progress.className = "event-progress";
+    const fill = document.createElement("i");
+    fill.style.setProperty("--progress", `${(frac * 100).toFixed(1)}%`);
+    progress.appendChild(fill);
+
     const joined = ev.participantIds.includes(selfId);
     const btn = document.createElement("button");
     btn.type = "button";
@@ -339,7 +360,7 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
       else cb.onJoinEvent(ev.id);
     });
 
-    card.append(head, meta, btn);
+    card.append(head, meta, progress, btn);
     return card;
   }
 

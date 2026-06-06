@@ -65,12 +65,14 @@ class RejectingAdapter implements HrAdapter {
 }
 
 describe("AttendanceService — initial state", () => {
-  it("defaults to NOT_CHECKED_IN with no last action", () => {
+  it("defaults to NOT_CHECKED_IN with no last action or times", () => {
     const svc = new AttendanceService(new OkAdapter());
     expect(svc.getState("u1")).toEqual({
       userId: "u1",
       status: "NOT_CHECKED_IN",
       lastActionAtMs: null,
+      lastCheckInMs: null,
+      lastCheckOutMs: null,
     });
   });
 });
@@ -94,6 +96,8 @@ describe("AttendanceService — happy-path transitions", () => {
       userId: "u1",
       status: "CHECKED_IN",
       lastActionAtMs: T0,
+      lastCheckInMs: T0,
+      lastCheckOutMs: null,
     });
     expect(changes).toEqual([{ userId: "u1", status: "CHECKED_IN" }]);
     expect(adapter.checkInCalls).toEqual([{ id: "u1", at: T0 }]);
@@ -139,6 +143,67 @@ describe("AttendanceService — happy-path transitions", () => {
     await svc.checkOut("u2", T1);
     expect(svc.getState("u1").status).toBe("CHECKED_IN");
     expect(svc.getState("u2").status).toBe("CHECKED_OUT");
+  });
+});
+
+describe("AttendanceService — check-in/out times from adapter results", () => {
+  it("records lastCheckInMs from the adapter's recordedAtMs", async () => {
+    const svc = new AttendanceService(new OkAdapter());
+    await svc.checkIn("u1", T0);
+    const s = svc.getState("u1");
+    expect(s.lastCheckInMs).toBe(T0);
+    expect(s.lastCheckOutMs).toBeNull();
+  });
+
+  it("records lastCheckOutMs and PRESERVES lastCheckInMs across a check-out", async () => {
+    const svc = new AttendanceService(new OkAdapter());
+    await svc.checkIn("u1", T0);
+    await svc.checkOut("u1", T1);
+    const s = svc.getState("u1");
+    expect(s.status).toBe("CHECKED_OUT");
+    expect(s.lastCheckInMs).toBe(T0); // survives the check-out
+    expect(s.lastCheckOutMs).toBe(T1);
+  });
+
+  it("a re-check-in updates lastCheckInMs while keeping the prior lastCheckOutMs", async () => {
+    const svc = new AttendanceService(new OkAdapter());
+    await svc.checkIn("u1", T0);
+    await svc.checkOut("u1", T1);
+    await svc.checkIn("u1", T2);
+    const s = svc.getState("u1");
+    expect(s.lastCheckInMs).toBe(T2);
+    expect(s.lastCheckOutMs).toBe(T1); // carried forward
+  });
+
+  it("uses the ADAPTER's recordedAtMs, not the requested atMs (greytHR-accepted time)", async () => {
+    // Adapter that accepts the swipe at a DIFFERENT (corrected) time.
+    const accepted = T0 + 5_000;
+    const adapter: HrAdapter = {
+      async lookupEmployee() {
+        return null;
+      },
+      async syncDepartments() {
+        return [];
+      },
+      async checkIn() {
+        return { ok: true, recordedAtMs: accepted, status: "CHECKED_IN" };
+      },
+      async checkOut() {
+        return { ok: true, recordedAtMs: accepted, status: "CHECKED_OUT" };
+      },
+    };
+    const svc = new AttendanceService(adapter);
+    await svc.checkIn("u1", T0);
+    expect(svc.getState("u1").lastCheckInMs).toBe(accepted);
+    expect(svc.getState("u1").lastActionAtMs).toBe(accepted);
+  });
+
+  it("does not record any time when the action fails", async () => {
+    const svc = new AttendanceService(new RejectingAdapter());
+    await svc.checkIn("u1", T0);
+    const s = svc.getState("u1");
+    expect(s.lastCheckInMs).toBeNull();
+    expect(s.lastCheckOutMs).toBeNull();
   });
 });
 

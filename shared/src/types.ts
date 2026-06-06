@@ -34,6 +34,14 @@ export interface PlayerSnapshot {
   dir: Direction;
   presence: PresenceState;
   source: PresenceSource;
+  /**
+   * True for ambient, server-driven office NPCs (not real users). OPTIONAL and
+   * backward-compatible: absent/false means a human player. The client may use
+   * it to label/hide NPCs; the server uses it to exclude them from human-only
+   * paths (HR session resolution, leave handling, etc.). NPCs never join
+   * meetings, never touch HR, and never respond to humans (ambience only).
+   */
+  isNpc?: boolean;
 }
 
 export const SOCIAL_EVENT_TYPES = [

@@ -105,6 +105,9 @@ async function main(): Promise<void> {
         if (!room) return null;
         const p = room.listPlayers().find((pl) => pl.sessionId === sessionId);
         if (!p) return null;
+        // Ambient NPCs are not real users and must never touch HR (plan rule):
+        // refuse to resolve an NPC sessionId to an attendance identity.
+        if (p.isNpc) return null;
         // No real OAuth email on the dev path -> derive one so the mock yields
         // hits. When OAuth provides a real email, surface it here instead.
         return { userId: p.userId, name: p.name, email: emailForName(p.name) };
