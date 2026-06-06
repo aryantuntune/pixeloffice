@@ -1,6 +1,6 @@
 # PixelOffice
 
-[![CI](https://github.com/aryantuntune/officegame/actions/workflows/ci.yml/badge.svg)](https://github.com/aryantuntune/officegame/actions/workflows/ci.yml)
+[![CI](https://github.com/aryantuntune/pixeloffice/actions/workflows/ci.yml/badge.svg)](https://github.com/aryantuntune/pixeloffice/actions/workflows/ci.yml)
 
 PixelOffice is a multiplayer virtual office inspired by Pokémon Emerald that helps
 distributed teams feel present, connected, and aware of each other's availability
