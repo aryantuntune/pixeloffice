@@ -79,6 +79,31 @@ function formatTime(epochMs: number): string {
   }
 }
 
+/** True when an epoch-ms timestamp falls on the current local day. */
+function isToday(epochMs: number): boolean {
+  const d = new Date(epochMs);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+/** Human-readable duration, e.g. "1h 23m 45s". */
+function formatDuration(ms: number, withSeconds: boolean): string {
+  const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  const totalSec = Math.floor(safe / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  if (withSeconds) parts.push(`${s}s`);
+  return parts.join(" ");
+}
+
 export interface AttendanceWidgetHandle {
   /** Re-query the server status (e.g. on reconnect). */
   refresh(): Promise<void>;
@@ -102,6 +127,19 @@ export function mountAttendance(
   title.className = "hud-panel-title";
   title.textContent = "Attendance";
 
+  // "Open greytHR" deep link. Hidden until the server reports a portalUrl (i.e.
+  // the real GreytHR integration is configured); stays hidden on the mock path.
+  const portalLink = document.createElement("a");
+  portalLink.className = "attendance-portal-link";
+  portalLink.textContent = "Open greytHR ↗";
+  portalLink.target = "_blank";
+  portalLink.rel = "noopener noreferrer";
+  portalLink.hidden = true;
+
+  const header = document.createElement("div");
+  header.className = "attendance-header";
+  header.append(title, portalLink);
+
   const statusRow = document.createElement("div");
   statusRow.className = "attendance-status";
 
@@ -123,17 +161,18 @@ export function mountAttendance(
   const checkInTime = document.createElement("div");
   checkInTime.className = "attendance-time attendance-time-in";
   checkInTime.hidden = true;
-  // Inline fallback (overridable by .attendance-time in styles.css):
-  checkInTime.style.fontSize = "12px";
-  checkInTime.style.opacity = "0.8";
 
   const checkOutTime = document.createElement("div");
   checkOutTime.className = "attendance-time attendance-time-out";
   checkOutTime.hidden = true;
-  checkOutTime.style.fontSize = "12px";
-  checkOutTime.style.opacity = "0.8";
 
   times.append(checkInTime, checkOutTime);
+
+  // Elapsed (live while checked in) / worked total (after check-out).
+  const elapsed = document.createElement("div");
+  elapsed.className = "attendance-elapsed";
+  elapsed.hidden = true;
+  elapsed.setAttribute("aria-live", "off");
 
   const actions = document.createElement("div");
   actions.className = "attendance-actions";
@@ -154,50 +193,80 @@ export function mountAttendance(
   feedback.className = "attendance-feedback";
   feedback.setAttribute("aria-live", "polite");
 
-  // "Open greytHR" deep link. Hidden until the server reports a portalUrl (i.e.
-  // the real GreytHR integration is configured); stays hidden on the mock path.
-  const portalLink = document.createElement("a");
-  portalLink.className = "attendance-portal-link";
-  portalLink.textContent = "Open greytHR ↗";
-  portalLink.target = "_blank";
-  portalLink.rel = "noopener noreferrer";
-  portalLink.hidden = true;
-
-  root.append(title, statusRow, times, actions, feedback, portalLink);
+  root.append(header, statusRow, times, elapsed, actions, feedback);
   container.appendChild(root);
 
   let current: AttendanceStatus = "NOT_CHECKED_IN";
   let busy = false;
   let destroyed = false;
   let feedbackTimer: number | undefined;
+  let lastCheckInMs: number | undefined;
+  let lastCheckOutMs: number | undefined;
+  let elapsedTimer: number | undefined;
+
+  function stopTicker(): void {
+    if (elapsedTimer !== undefined) {
+      window.clearInterval(elapsedTimer);
+      elapsedTimer = undefined;
+    }
+  }
+
+  /** Render the elapsed/worked line; tick every second while checked in. */
+  function renderElapsed(): void {
+    if (current === "CHECKED_IN" && typeof lastCheckInMs === "number") {
+      const since = lastCheckInMs;
+      elapsed.textContent = `Elapsed: ${formatDuration(Date.now() - since, true)}`;
+      elapsed.hidden = false;
+      if (elapsedTimer === undefined) {
+        elapsedTimer = window.setInterval(() => {
+          if (destroyed || current !== "CHECKED_IN") return;
+          elapsed.textContent = `Elapsed: ${formatDuration(Date.now() - since, true)}`;
+        }, 1000);
+      }
+    } else if (
+      current === "CHECKED_OUT" &&
+      typeof lastCheckInMs === "number" &&
+      typeof lastCheckOutMs === "number" &&
+      lastCheckOutMs > lastCheckInMs
+    ) {
+      stopTicker();
+      elapsed.textContent = `Worked: ${formatDuration(lastCheckOutMs - lastCheckInMs, false)}`;
+      elapsed.hidden = false;
+    } else {
+      stopTicker();
+      elapsed.textContent = "";
+      elapsed.hidden = true;
+    }
+  }
 
   function render(): void {
     statusText.textContent = STATUS_LABEL[current];
     dot.style.background = STATUS_COLOR[current];
-    // Both actions remain available (re-check-in is allowed) but the "current"
-    // one is de-emphasized. Disable while a request is in flight.
-    checkInBtn.disabled = busy;
-    checkOutBtn.disabled = busy || current === "NOT_CHECKED_IN";
-    checkInBtn.classList.toggle("is-current", current === "CHECKED_IN");
-    checkOutBtn.classList.toggle("is-current", current === "CHECKED_OUT");
+    // Daily logic: once you check in today, check-in is disabled; once you check
+    // out today, check-out is disabled. Both reset on the next day.
+    const checkedInToday = lastCheckInMs != null && isToday(lastCheckInMs);
+    const checkedOutToday = lastCheckOutMs != null && isToday(lastCheckOutMs);
+    checkInBtn.disabled = busy || checkedInToday;
+    checkOutBtn.disabled = busy || !checkedInToday || checkedOutToday;
   }
 
   /** Show/hide the check-in/out time lines from the server's timestamps. */
   function renderTimes(checkInMs?: number, checkOutMs?: number): void {
     if (typeof checkInMs === "number") {
-      checkInTime.textContent = `Checked in at ${formatTime(checkInMs)}`;
+      checkInTime.textContent = formatTime(checkInMs);
       checkInTime.hidden = false;
     } else {
       checkInTime.textContent = "";
       checkInTime.hidden = true;
     }
     if (typeof checkOutMs === "number") {
-      checkOutTime.textContent = `Checked out at ${formatTime(checkOutMs)}`;
+      checkOutTime.textContent = formatTime(checkOutMs);
       checkOutTime.hidden = false;
     } else {
       checkOutTime.textContent = "";
       checkOutTime.hidden = true;
     }
+    times.hidden = checkInTime.hidden && checkOutTime.hidden;
   }
 
   function showFeedback(message: string, kind: "ok" | "error"): void {
@@ -212,6 +281,7 @@ export function mountAttendance(
   async function refresh(): Promise<void> {
     const sessionId = opts.getSessionId();
     if (!sessionId) {
+      stopTicker();
       root.hidden = true;
       return;
     }
@@ -222,13 +292,17 @@ export function mountAttendance(
       );
       if (res.status === 404 || !res.ok) {
         // HR integration absent (or session unknown) -> hide; office unaffected.
+        stopTicker();
         root.hidden = true;
         return;
       }
       const data = (await res.json()) as StatusResponse;
       current = data.status;
       // Surface WHEN the user checked in/out (hidden when the server omits them).
-      renderTimes(data.lastCheckInMs, data.lastCheckOutMs);
+      lastCheckInMs = data.lastCheckInMs;
+      lastCheckOutMs = data.lastCheckOutMs;
+      renderTimes(lastCheckInMs, lastCheckOutMs);
+      renderElapsed();
       // Reveal the portal deep link only when the server supplies one.
       if (data.portalUrl) {
         portalLink.href = data.portalUrl;
@@ -260,6 +334,10 @@ export function mountAttendance(
       const data = (await res.json().catch(() => null)) as ActionResponse | null;
       if (res.ok && data?.ok) {
         current = data.status;
+        // Optimistically record the time so the button disables immediately;
+        // refresh() reconciles with greytHR's accepted swipe time.
+        if (kind === "check-in") lastCheckInMs = Date.now();
+        else lastCheckOutMs = Date.now();
         showFeedback(kind === "check-in" ? "Checked in." : "Checked out.", "ok");
         // Re-query so the newly recorded check-in/out time line appears (the
         // action response intentionally carries only ok/status/reason).
@@ -286,6 +364,7 @@ export function mountAttendance(
     destroy(): void {
       destroyed = true;
       if (feedbackTimer) window.clearTimeout(feedbackTimer);
+      stopTicker();
       root.remove();
     },
   };
