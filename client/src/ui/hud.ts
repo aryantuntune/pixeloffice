@@ -81,6 +81,11 @@ export interface HudCallbacks {
 export interface HudHandle {
   /** Render once from the current store snapshot (called on every change). */
   render(): void;
+  /** Briefly flash a roster row (used by Locate so the user sees who they
+   *  panned to). No-op if the row is not currently rendered. */
+  flashRow(sessionId: string): void;
+  /** The DOM node hosting the chat input — emote buttons dock beside it. */
+  chatBar(): HTMLElement;
   /** Tear down: remove the HUD DOM + its timer/global listeners. MUST be called
    *  on reconnect/teardown or the 1s interval and document listener leak. */
   destroy(): void;
@@ -280,7 +285,10 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
 
   function renderRoster(state: UiState): void {
     rosterBody.innerHTML = "";
-    const players = [...state.players.values()];
+    const hideNpcs = cb.isNpcHidden?.() ?? false;
+    // Filter ambient NPCs out of the roster when "hide bots" is on (display-only;
+    // the player still exists server-side — we just don't list them).
+    const players = [...state.players.values()].filter((p) => !(p.isNpc && hideNpcs));
     // Self first within each group: handled by sorting self to the front overall.
     const grouped = new Map<PresenceState, PlayerSnapshot[]>();
     for (const s of GROUP_ORDER) grouped.set(s, []);
@@ -312,9 +320,13 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
       for (const p of bucket) {
         const row = document.createElement("div");
         row.className = "roster-row";
+        row.dataset.session = p.sessionId;
         // Mark ambient NPCs so the stylesheet can dim them (display-only; NPCs
         // render identically in-game). Backward-compatible: humans have no flag.
         if (p.isNpc) row.dataset.npc = "true";
+        // Clicking the row (anywhere but the ⓘ) locates the player: pans the
+        // CAMERA to them (never moves an avatar — human-agency rule).
+        row.addEventListener("click", () => cb.onLocate?.(p.sessionId));
         const dot = document.createElement("span");
         dot.className = "presence-dot";
         dot.style.background = PRESENCE_META[p.presence].color;
@@ -334,7 +346,17 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
         area.textContent = areaNameFor(p);
         sub.append(chip, area);
         info.append(nameEl, sub);
-        row.append(dot, info);
+        // ⓘ affordance opens the profile card (distinct from row-click = locate).
+        const infoBtn = document.createElement("button");
+        infoBtn.type = "button";
+        infoBtn.className = "roster-info-btn";
+        infoBtn.textContent = "ⓘ";
+        infoBtn.setAttribute("aria-label", `Open ${p.name}'s profile`);
+        infoBtn.addEventListener("click", (e) => {
+          e.stopPropagation(); // don't also trigger the row's locate handler
+          cb.onOpenProfile?.(p.sessionId);
+        });
+        row.append(dot, info, infoBtn);
         groupEl.appendChild(row);
       }
       rosterBody.appendChild(groupEl);
@@ -453,6 +475,19 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   render();
   return {
     render,
+    flashRow(sessionId: string): void {
+      const row = rosterBody.querySelector<HTMLElement>(
+        `.roster-row[data-session="${CSS.escape(sessionId)}"]`,
+      );
+      if (!row) return;
+      row.classList.remove("locate-flash");
+      void row.offsetWidth; // restart the animation
+      row.classList.add("locate-flash");
+      window.setTimeout(() => row.classList.remove("locate-flash"), 1200);
+    },
+    chatBar(): HTMLElement {
+      return chatBar;
+    },
     destroy(): void {
       window.clearInterval(timerId);
       document.removeEventListener("click", onDocClick);

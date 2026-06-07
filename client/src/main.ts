@@ -20,6 +20,8 @@ import {
   C2S,
   S2C,
   type ChatBroadcastPayload,
+  type Emote,
+  type EmoteBroadcastPayload,
   type EventCreatedPayload,
   type EventEndedPayload,
   type EventUpdatedPayload,
@@ -53,6 +55,11 @@ import { createAdmin } from "./ui/admin";
 import { mountConnectionBanner } from "./ui/connection-banner";
 import { mountAttendance, type AttendanceWidgetHandle } from "./ui/attendance";
 import { mountCalendarConnect, type CalendarConnectHandle } from "./ui/calendar-connect";
+import { mountEmoteBar, type EmoteBarHandle } from "./ui/emote-bar";
+import { mountProfileCard, type ProfileCardHandle } from "./ui/profile-card";
+import { mountMinimap, type MinimapHandle } from "./ui/minimap";
+import { mountSettings, readHideNpcs, type SettingsHandle } from "./ui/settings";
+import { mountOnboarding, type OnboardingHandle } from "./ui/onboarding";
 
 const gameRoot = document.getElementById("game-root")!;
 const hudRoot = document.getElementById("hud-root")!;
@@ -95,6 +102,63 @@ let storeUnsubscribe: (() => void) | null = null;
 let adminMounted = false;
 let selfId = ""; // current sessionId; refreshed on every WELCOME
 let activeConn: Connection | null = null; // current Connection; closed on relogin
+
+// New social/navigation widgets. The emote bar + profile card are rebuilt per
+// session (they bind to the live HUD/connection); the settings popover and
+// onboarding tour mount ONCE and persist across reconnects (like admin), reading
+// the live game handle lazily. The minimap is rebuilt per session (it binds to
+// the current store) but its collapsed state persists in localStorage.
+let emoteBar: EmoteBarHandle | null = null;
+let profileCard: ProfileCardHandle | null = null;
+let minimap: MinimapHandle | null = null;
+let settings: SettingsHandle | null = null;
+let onboarding: OnboardingHandle | null = null;
+
+// Chat-focus flag for the global keys-1-4 emote handler (we must NOT fire an
+// emote while the user is typing a chat message). Updated from the HUD's
+// onChatFocus callback below.
+let chatFocused = false;
+
+// "Following → name" chip (locate): shown after a roster/minimap locate; cleared
+// on the user's next local movement (so it never lingers stale).
+const followChip = document.createElement("div");
+followChip.className = "follow-chip";
+followChip.hidden = true;
+hudRoot.appendChild(followChip);
+let following = false;
+
+function showFollowChip(name: string): void {
+  followChip.textContent = `Following → ${name}`;
+  followChip.hidden = false;
+  following = true;
+}
+function clearFollowChip(): void {
+  if (!following) return;
+  following = false;
+  followChip.hidden = true;
+}
+
+/** True when a modal/popover/typed field would swallow a 1-4 keypress. */
+function emoteKeysBlocked(): boolean {
+  if (chatFocused) return true;
+  const ae = document.activeElement as HTMLElement | null;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) {
+    return true;
+  }
+  // Any open overlay: admin modal, settings popover, profile card, onboarding.
+  return !!document.querySelector(
+    ".admin-backdrop:not([hidden]), .settings-pop:not([hidden]), .profile-card:not([hidden]), .onboard-overlay:not([hidden])",
+  );
+}
+
+// Global keys-1-4 → emote. Registered ONCE (module scope); defers to the live
+// emoteBar handle and the focus/modal guard above so it never fires while typing.
+window.addEventListener("keydown", (e) => {
+  if (e.key < "1" || e.key > "4") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!emoteBar || emoteKeysBlocked()) return;
+  emoteBar.triggerIndex(Number(e.key) - 1);
+});
 
 async function start(opts: JoinSubmission): Promise<void> {
   // A relogin (after going offline) builds a fresh Connection; close the old one
@@ -165,6 +229,12 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
       conn.send(C2S.MOVE, { x, y, dir, moving });
       // Mirror locally so the roster's "current area" tracks self movement.
       localStore.movePlayer(selfId, x, y, dir, moving);
+      // Locate is camera-only: as soon as the user walks, stop "following" and
+      // let onboarding step 1 auto-advance on the first real movement.
+      if (moving) {
+        clearFollowChip();
+        onboarding?.notifyMoved();
+      }
     },
     onAreaChange: (areaName) => localStore.setSelfArea(areaName),
     onInteractPrompt: (prompt, gameId) => localStore.setInteractPrompt(prompt, gameId),
@@ -233,7 +303,10 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
   });
 
   const localHud = hud;
-  storeUnsubscribe = localStore.subscribe(() => localHud.render());
+  storeUnsubscribe = localStore.subscribe(() => {
+    localHud.render();
+    minimap?.render();
+  });
 
   // Admin console + attendance widget mount once (persist across reconnects;
   // they read the live connection lazily via getSessionId / fetch).
@@ -262,6 +335,50 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
     getSessionId: liveSessionId,
   });
 
+  // --- Round features: emote bar, profile card, minimap, settings, tour -----
+
+  // Emote bar docks beside the chat input (inside the HUD's chat region). It is
+  // rebuilt with the HUD each session. We never echo locally — the bubble shows
+  // when S2C.EMOTE comes back from the server (handled in the bridge).
+  emoteBar = mountEmoteBar(localHud.chatBar(), {
+    onEmote: (emote: Emote) => conn.send(C2S.EMOTE, { emote }),
+  });
+
+  // Profile card (per session — its Wave button emotes from the live connection).
+  profileCard = mountProfileCard(hudRoot, {
+    onWave: () => conn.send(C2S.EMOTE, { emote: "WAVE" }),
+  });
+
+  // Minimap (per session — binds to this store). Dots redraw on every store
+  // change via the subscribe() above; clicking a dot locates (pans) the player.
+  minimap = mountMinimap(hudRoot, localStore, {
+    onLocate: (sessionId) => locate(sessionId),
+    isNpcHidden: () => readHideNpcs(),
+  });
+
+  // Settings popover + onboarding tour mount ONCE and persist across reconnects
+  // (like admin). They read the LIVE game handle lazily through the `game` ref,
+  // so a reconnect that rebuilds the game keeps them working.
+  if (!settings) {
+    settings = mountSettings(hudRoot, {
+      onZoom: (zoom) => game?.setZoom(zoom),
+      onReducedMotion: (on) => game?.setReducedMotion(on),
+      onHideNpcs: (hidden) => {
+        game?.setNpcVisibility(!hidden);
+        // Roster + minimap read readHideNpcs() live; re-render to reflect it.
+        hud?.render();
+        minimap?.render();
+      },
+      onShowTour: () => onboarding?.start(),
+    });
+  }
+  if (!onboarding) {
+    onboarding = mountOnboarding(hudRoot);
+  }
+  // Re-apply persisted settings to the freshly-built game handle every boot
+  // (the game is recreated on each WELCOME, so zoom/motion/NPC must be re-pushed).
+  settings.applyToGame();
+
   login.hide();
 
   // If we just returned from the calendar OAuth flow, confirm it once the HUD
@@ -274,6 +391,26 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
       "meeting",
     );
   }
+}
+
+// ----------------------------------------------------------------------
+// Locate + profile helpers (camera-only; never move an avatar — agency rule).
+// ----------------------------------------------------------------------
+
+/** Pan the CAMERA to a player, flash their roster row, and show the follow chip
+ *  (which clears on the user's next local movement). Never moves any avatar. */
+function locate(sessionId: string): void {
+  if (!game || !store) return;
+  game.panToPlayer(sessionId);
+  hud?.flashRow(sessionId);
+  const p = store.get().players.get(sessionId);
+  if (p) showFollowChip(p.sessionId === selfId ? "you" : p.name);
+}
+
+/** Open the profile card for a player from the live store snapshot. */
+function openProfile(sessionId: string): void {
+  if (!store || !profileCard) return;
+  profileCard.open(store.get().players.get(sessionId));
 }
 
 // ----------------------------------------------------------------------
@@ -328,6 +465,13 @@ function registerBridge(conn: Connection): void {
     if (sessionId !== selfId) toasts.show(`${name}: ${text}`, "info");
   });
 
+  // Emote broadcast (includes the sender): the game pops a bubble over the
+  // emoting player's avatar. No local echo needed — this single path covers
+  // self + everyone (presence, not surveillance: ephemeral, nothing stored).
+  conn.on<EmoteBroadcastPayload>(S2C.EMOTE, ({ sessionId, emote }) => {
+    game?.showEmote(sessionId, emote);
+  });
+
   conn.on<EventCreatedPayload>(S2C.EVENT_CREATED, ({ event }) => {
     store?.upsertEvent(event);
   });
@@ -366,6 +510,15 @@ function teardownSession(): void {
   attendance = null;
   calendarConnect?.destroy();
   calendarConnect = null;
+  // Per-session round widgets (emote bar lives inside the HUD's chat region, so
+  // destroy it before the HUD; the profile card + minimap are HUD-root siblings).
+  emoteBar?.destroy();
+  emoteBar = null;
+  profileCard?.destroy();
+  profileCard = null;
+  minimap?.destroy();
+  minimap = null;
+  clearFollowChip();
   hud?.destroy();
   hud = null;
   if (game) {

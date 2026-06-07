@@ -18,6 +18,7 @@
 import { Room, type Client } from "colyseus";
 import {
   C2S,
+  EMOTES,
   S2C,
   AVATAR_IDS,
   DEPARTMENTS,
@@ -32,6 +33,9 @@ import {
   type ChatBroadcastPayload,
   type ChatPayload,
   type Direction,
+  type Emote,
+  type EmoteBroadcastPayload,
+  type EmotePayload,
   type JoinEventPayload,
   type JoinMeetingPayload,
   type MeetingInfo,
@@ -616,6 +620,24 @@ export class OfficeRoom extends Room {
     this.broadcast(S2C.CHAT, out);
   }
 
+  private handleEmote(client: Client, payload: EmotePayload): void {
+    // Emotes are an explicit social action — guard with the SAME per-session
+    // action token-bucket as SET_STATUS / JOIN_* so a client cannot flood the
+    // fan-out. Over-limit emotes are dropped, never broadcast.
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const snap = this.players.get(client.sessionId);
+    if (!snap) return; // unknown/already-left session
+    const emote = payload?.emote;
+    if (!isValidEmote(emote)) return; // drop unknown/garbage emotes
+
+    // Emoting counts as activity (clears auto-AWAY), like chat/status.
+    container.presence.activity(client.sessionId, Date.now());
+
+    // Broadcast to ALL including the sender (they want to see their own bubble).
+    const out: EmoteBroadcastPayload = { sessionId: client.sessionId, emote };
+    this.broadcast(S2C.EMOTE, out);
+  }
+
   private handleJoinEvent(client: Client, payload: JoinEventPayload): void {
     if (!this.allow(this.actionBuckets, client.sessionId)) return;
     const eventId = payload?.eventId;
@@ -1104,4 +1126,11 @@ function manhattan(ax: number, ay: number, bx: number, by: number): number {
 
 function isValidDir(dir: unknown): dir is Direction {
   return dir === "up" || dir === "down" || dir === "left" || dir === "right";
+}
+
+const EMOTE_SET: ReadonlySet<string> = new Set(EMOTES);
+
+/** True only for a known emote token. Pure helper (exported for tests). */
+export function isValidEmote(emote: unknown): emote is Emote {
+  return typeof emote === "string" && EMOTE_SET.has(emote);
 }

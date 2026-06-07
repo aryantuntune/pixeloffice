@@ -13,11 +13,13 @@
 
 import Phaser from "phaser";
 import {
+  EMOTE_EMOJI,
   PresenceState,
   areaAt,
   buildOfficeMap,
   isWalkable,
   type Direction,
+  type Emote,
   type FurnitureKind,
   type OfficeMap,
   type PlayerSnapshot,
@@ -32,8 +34,14 @@ import {
   DEPTH_OVERLAY,
   DEPTH_RUG,
   DEPTH_WALL,
+  EMOTE_MS,
+  PAN_MS,
+  PAN_RESUME_MS,
   STEP_MS,
   TILE,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  ZOOM_TWEEN_MS,
 } from "./constants";
 import {
   TEX,
@@ -69,6 +77,9 @@ interface Avatar {
   badgeIcon: Phaser.GameObjects.Text;
   bubble?: Phaser.GameObjects.Container;
   bubbleTimer?: Phaser.Time.TimerEvent;
+  /** Active emote bubble (capped at one per avatar; replaced on a new emote). */
+  emote?: Phaser.GameObjects.Container;
+  emoteTimer?: Phaser.Time.TimerEvent;
   /** In-flight grid step tween, if any (remote interpolation / local step). */
   stepTween?: Phaser.Tweens.Tween;
   presence: PresenceState;
@@ -170,6 +181,10 @@ export class OfficeScene extends Phaser.Scene {
 
     const dir = this.pollDirection();
     if (!dir) return;
+
+    // Any local movement input cancels a pan-to-player and snaps the camera
+    // back to following the local avatar (human agency: the user is in control).
+    if (this.panResumeTimer) this.resumeFollowSelf();
 
     // Face that way even if blocked (Emerald turn-in-place feel).
     self.snap.dir = dir;
@@ -283,10 +298,13 @@ export class OfficeScene extends Phaser.Scene {
       quantity: 1,
     });
     emitter.setDepth(DEPTH_ENTITY_BASE + (fy + 1) * TILE + 2);
+    this.steamEmitters.push(emitter);
+    if (this.reducedMotion) emitter.stop();
   }
 
   /** One-shot dust puff burst at a tile centre (teleport feedback). */
   private dustPuff(tileX: number, tileY: number): void {
+    if (this.reducedMotion) return; // decorative only
     const x = tileX * TILE + TILE / 2;
     const y = tileY * TILE + TILE / 2 + 6;
     const emitter = this.add.particles(x, y, TEX.dust, {
@@ -366,14 +384,31 @@ export class OfficeScene extends Phaser.Scene {
     this.avatars.set(snap.sessionId, avatar);
     this.applyDepth(avatar);
     this.applyPresenceAnim(avatar);
+    // Newly joined NPCs respect the current hide-NPCs flag immediately.
+    if (avatar.snap.isNpc && !this.npcVisible) this.applyAvatarVisibility(avatar, false);
     return avatar;
+  }
+
+  /** Show/hide every visual part of one avatar (sprite, shadow, tags, bubbles). */
+  private applyAvatarVisibility(a: Avatar, visible: boolean): void {
+    a.sprite.setVisible(visible);
+    a.shadow.setVisible(visible);
+    a.nameTag.setVisible(visible);
+    // The badge has its own empty-state visibility; only force-show when the
+    // presence actually has an icon, otherwise keep it hidden.
+    a.badge.setVisible(visible && BADGE_FOR[a.presence] !== "");
+    a.bubble?.setVisible(visible);
+    a.emote?.setVisible(visible);
   }
 
   /** Redraw the dark pill behind the presence icon, or hide it when empty. */
   private drawBadgePill(a: Avatar): void {
     a.badgeBg.clear();
     const icon = BADGE_FOR[a.presence];
-    a.badge.setVisible(icon !== "");
+    // A hidden NPC's badge must stay hidden even when presence (and thus the
+    // pill) is redrawn; otherwise it would reappear above an invisible avatar.
+    const hiddenNpc = a.snap.isNpc === true && !this.npcVisible;
+    a.badge.setVisible(icon !== "" && !hiddenNpc);
     if (icon === "") return;
     const w = a.badgeIcon.width + 8;
     const h = a.badgeIcon.height + 4;
@@ -409,6 +444,7 @@ export class OfficeScene extends Phaser.Scene {
     a.nameTag.setPosition(px, py - TILE * 0.95);
     a.badge.setPosition(px + a.nameTag.displayWidth / 2 + 10, py - TILE * 0.95 - 6);
     if (a.bubble) a.bubble.setPosition(px, py - TILE * 1.35);
+    if (a.emote) a.emote.setPosition(px, py - TILE * 1.3);
   }
 
   // -------------------------------------------------------------------------
@@ -525,6 +561,7 @@ export class OfficeScene extends Phaser.Scene {
       existing.snap = { ...snap };
       this.placeInstant(existing, snap.x, snap.y);
       this.setPresenceBadge(existing, snap.presence);
+      this.applyAvatarVisibility(existing, !existing.snap.isNpc || this.npcVisible);
       return;
     }
     this.spawnAvatar(snap, false);
@@ -536,6 +573,8 @@ export class OfficeScene extends Phaser.Scene {
     a.stepTween?.stop();
     a.bubbleTimer?.remove();
     a.bubble?.destroy();
+    a.emoteTimer?.remove();
+    a.emote?.destroy();
     a.sprite.destroy();
     a.shadow.destroy();
     a.nameTag.destroy();

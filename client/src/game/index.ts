@@ -26,6 +26,16 @@ export interface OfficeGameHandle {
   showChatBubble(sessionId: string, text: string): void; // also accepts self sessionId
   /** Lock keyboard movement while the user is typing in the HUD (chat focus). */
   setInputLocked(locked: boolean): void;
+  /** Pop an emote bubble above an avatar's name tag (also accepts self sessionId). */
+  showEmote(sessionId: string, emote: string): void;
+  /** Smooth-pan the camera to an avatar, then resume following self. Never moves avatars. */
+  panToPlayer(sessionId: string): void;
+  /** Set the camera zoom (clamped to ZOOM_MIN..ZOOM_MAX) with a smooth tween. */
+  setZoom(zoom: number): void;
+  /** Show/hide every NPC avatar (sprite, shadow, tag, badge, bubbles). */
+  setNpcVisibility(visible: boolean): void;
+  /** When on, skip decorative tweens (emote bounce, camera pan, dust, steam). */
+  setReducedMotion(on: boolean): void;
   destroy(): void;
 }
 
@@ -111,6 +121,21 @@ function makeHandle(game: Phaser.Game, scene: OfficeScene): OfficeGameHandle {
     },
     setInputLocked(locked) {
       scene.setInputLocked(locked);
+    },
+    showEmote(sessionId, emote) {
+      scene.apiShowEmote(sessionId, emote);
+    },
+    panToPlayer(sessionId) {
+      scene.apiPanToPlayer(sessionId);
+    },
+    setZoom(zoom) {
+      scene.apiSetZoom(zoom);
+    },
+    setNpcVisibility(visible) {
+      scene.apiSetNpcVisibility(visible);
+    },
+    setReducedMotion(on) {
+      scene.apiSetReducedMotion(on);
     },
     destroy() {
       // Explicitly release the WebGL context. Phaser's WebGLRenderer.destroy()

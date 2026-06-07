@@ -90,6 +90,21 @@ export interface MeetingInfo {
   meetLink?: string;
 }
 
+/**
+ * Lightweight, ephemeral emotes a player can pop over their own avatar. These
+ * are pure social expression (presence, not surveillance): the server treats an
+ * emote as activity and fans it out to everyone, but stores nothing. OPTIONAL
+ * and backward-compatible — an older client that never sends one is unaffected.
+ */
+export const EMOTES = ["WAVE", "THUMBS_UP", "COFFEE", "HEART"] as const;
+export type Emote = (typeof EMOTES)[number];
+export const EMOTE_EMOJI: Record<Emote, string> = {
+  WAVE: "👋",
+  THUMBS_UP: "👍",
+  COFFEE: "☕",
+  HEART: "❤️",
+};
+
 /** Display metadata for presence states (single source of truth for UI colors). */
 export const PRESENCE_META: Record<PresenceState, { label: string; color: string; emoji: string }> = {
   [PresenceState.AVAILABLE]: { label: "Available", color: "#3ecf6e", emoji: "" },

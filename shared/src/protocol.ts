@@ -7,6 +7,7 @@ import type {
   AvatarId,
   Department,
   Direction,
+  Emote,
   MeetingInfo,
   PlayerSnapshot,
   PresenceSource,

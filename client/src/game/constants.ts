@@ -19,6 +19,16 @@ export const CAMERA_ZOOM = 1.4;
 export const BUBBLE_MS = 4000;
 /** Max characters shown in a chat bubble. */
 export const BUBBLE_MAX_CHARS = 60;
+/** How long an emote bubble stays on screen before it fades. */
+export const EMOTE_MS = 2500;
+/** Min/max camera zoom the settings slider may request. */
+export const ZOOM_MIN = 1.0;
+export const ZOOM_MAX = 2.0;
+/** Smooth camera pan/zoom tween duration (ms). */
+export const PAN_MS = 600;
+export const ZOOM_TWEEN_MS = 300;
+/** After a pan-to-player, how long before the camera resumes following self. */
+export const PAN_RESUME_MS = 1500;
 
 // --- Depth bands ------------------------------------------------------------
 // Floors at the bottom, then walls, then y-sorted entities, then UI on top.

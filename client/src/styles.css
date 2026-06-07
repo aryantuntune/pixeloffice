@@ -152,7 +152,9 @@ body {
   position: absolute;
   top: 12px;
   left: 12px;
-  right: 12px;
+  /* Reserve room on the right for the persistent Settings gear (36px + gap),
+     which is mounted at #hud-root level (survives HUD rebuilds on reconnect). */
+  right: 56px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1747,4 +1749,482 @@ body {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Same suppression when the user opts in via the Settings "Reduce motion"
+   toggle (body.reduced-motion is applied by ui/settings.ts), independent of OS. */
+body.reduced-motion *,
+body.reduced-motion *::before,
+body.reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ===========================================================================
+   Round features: emote bar, profile card, minimap, settings, onboarding,
+   locate (follow chip + row flash). All overlay children re-enable pointer
+   events (the HUD root is click-transparent by default).
+=========================================================================== */
+
+#hud-root .emote-bar button,
+#hud-root .profile-card,
+#hud-root .profile-card button,
+#hud-root .minimap,
+#hud-root .minimap button,
+#hud-root .minimap canvas,
+#hud-root .settings-trigger,
+#hud-root .settings-pop,
+#hud-root .settings-pop button,
+#hud-root .settings-pop input,
+#hud-root .onboard-callout,
+#hud-root .onboard-callout button,
+#hud-root .roster-info-btn {
+  pointer-events: auto;
+}
+
+/* ----------------------------- Emote bar -------------------------------- */
+
+.emote-bar {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.emote-btn {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(22, 28, 36, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: transform 0.12s var(--ease), background 0.15s ease, border-color 0.15s ease;
+}
+.emote-btn:hover {
+  background: var(--panel-2);
+  border-color: var(--accent-2);
+  transform: translateY(-2px);
+}
+.emote-btn:active {
+  transform: translateY(0) scale(0.94);
+}
+.emote-btn.emote-pop {
+  animation: emote-pop 0.32s var(--ease);
+}
+@keyframes emote-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.28); }
+  100% { transform: scale(1); }
+}
+
+/* ---------------------------- Profile card ------------------------------ */
+
+.profile-card[hidden] {
+  display: none;
+}
+.profile-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 248px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+  z-index: 55;
+  animation: card-pop 0.16s var(--ease) both;
+}
+@keyframes card-pop {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.profile-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.profile-name-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.profile-name {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-bot {
+  font-size: 11px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.profile-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.profile-close:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 9px;
+  color: var(--text);
+}
+.profile-presence-label {
+  color: var(--muted);
+}
+.profile-area {
+  color: var(--muted);
+}
+.profile-area-icon {
+  font-size: 12px;
+}
+
+.profile-wave-btn {
+  width: 100%;
+  margin-top: 4px;
+  background: linear-gradient(180deg, #3d84ee, var(--accent-2));
+  color: #fff;
+  border: 1px solid #2459b0;
+  border-radius: 8px;
+  padding: 8px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.1s var(--ease), filter 0.15s ease;
+}
+.profile-wave-btn:hover {
+  filter: brightness(1.08);
+}
+.profile-wave-btn:active {
+  transform: scale(0.97);
+}
+
+/* --------------------------- Roster ⓘ button ---------------------------- */
+
+.roster-row {
+  cursor: pointer;
+}
+.roster-info-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.roster-row:hover .roster-info-btn {
+  opacity: 1;
+}
+.roster-info-btn:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
+.roster-info-btn:focus-visible {
+  opacity: 1;
+}
+
+/* Locate flash: briefly highlight the row the camera panned to. */
+.roster-row.locate-flash {
+  animation: locate-flash 1.2s var(--ease);
+}
+@keyframes locate-flash {
+  0%   { background: rgba(46, 111, 216, 0.55); }
+  100% { background: transparent; }
+}
+
+/* ----------------------------- Follow chip ------------------------------ */
+
+.follow-chip[hidden] {
+  display: none;
+}
+.follow-chip {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  background: rgba(20, 26, 34, 0.94);
+  border: 1px solid var(--accent-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 30;
+  pointer-events: none;
+  animation: slide-up 0.3s var(--ease) both;
+}
+
+/* ------------------------------- Minimap -------------------------------- */
+
+.minimap {
+  position: absolute;
+  right: 12px;
+  bottom: 60px;
+  width: 176px;
+  background: linear-gradient(180deg, rgba(26, 33, 43, 0.96), rgba(20, 26, 34, 0.96));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.minimap.collapsed {
+  width: 176px;
+}
+.minimap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.minimap.collapsed .minimap-head {
+  border-bottom: none;
+}
+.minimap-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--muted);
+}
+.minimap-toggle {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.minimap-toggle:hover {
+  color: var(--text);
+}
+.minimap-canvas {
+  display: block;
+  cursor: pointer;
+  image-rendering: pixelated;
+}
+.minimap-canvas[hidden] {
+  display: none;
+}
+
+/* ------------------------------ Settings -------------------------------- */
+
+/* Anchored top-right, in the top-bar band. The HUD top bar reserves space for
+   it via `right: 56px` so the status pill never collides with the gear. */
+.settings-wrap {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  z-index: 20;
+}
+.settings-trigger {
+  background: rgba(14, 17, 22, 0.7);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  width: 36px;
+  height: 34px;
+  font-size: 15px;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: transform 0.12s var(--ease), background 0.15s ease;
+}
+.settings-trigger:hover {
+  background: var(--panel-2);
+  transform: translateY(-1px);
+}
+.settings-pop[hidden] {
+  display: none;
+}
+.settings-pop {
+  position: absolute;
+  top: 120%;
+  right: 0;
+  width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 55;
+  animation: menu-pop 0.14s var(--ease) both;
+}
+.settings-heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.settings-field.settings-toggle {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-label {
+  font-size: 12px;
+  color: var(--text);
+}
+.settings-slider {
+  width: 100%;
+  accent-color: var(--accent-2);
+  cursor: pointer;
+}
+.settings-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-2);
+  cursor: pointer;
+}
+.settings-tour-link {
+  background: transparent;
+  border: none;
+  color: var(--accent-2);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.settings-tour-link:hover {
+  filter: brightness(1.15);
+}
+
+/* ----------------------------- Onboarding ------------------------------- */
+
+.onboard-overlay[hidden] {
+  display: none;
+}
+.onboard-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  pointer-events: none;
+  background: rgba(5, 7, 10, 0.35);
+}
+.onboard-callout {
+  position: absolute;
+  width: 260px;
+  background: var(--panel);
+  border: 1px solid var(--accent-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+  pointer-events: auto;
+  animation: card-rise 0.2s var(--ease) both;
+}
+.onboard-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--accent);
+}
+.onboard-body {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.onboard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.onboard-dots {
+  display: flex;
+  gap: 5px;
+}
+.onboard-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.onboard-dot.on {
+  background: var(--accent-2);
+}
+.onboard-btns {
+  display: flex;
+  gap: 8px;
+}
+.onboard-skip {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 7px;
+}
+.onboard-skip:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.onboard-next {
+  background: linear-gradient(180deg, #3d84ee, var(--accent-2));
+  color: #fff;
+  border: 1px solid #2459b0;
+  border-radius: 7px;
+  padding: 6px 14px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.onboard-next:hover {
+  filter: brightness(1.08);
 }
