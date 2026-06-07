@@ -12,11 +12,22 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it } from "vitest";
-import { EMOTES, type Emote, type EmoteBroadcastPayload } from "@pixeloffice/shared";
+import {
+  C2S,
+  EMOTES,
+  S2C,
+  type Emote,
+  type EmoteBroadcastPayload,
+} from "@pixeloffice/shared";
 import { TokenBucket } from "../http/rate-limit";
 import { isValidEmote } from "./office.room";
 
 describe("isValidEmote", () => {
+  it("defines the emote wire message types", () => {
+    expect(C2S.EMOTE).toBe("emote");
+    expect(S2C.EMOTE).toBe("emote");
+  });
+
   it("accepts every defined emote token", () => {
     for (const e of EMOTES) {
       expect(isValidEmote(e)).toBe(true);

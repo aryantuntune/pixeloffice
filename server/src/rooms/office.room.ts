@@ -398,16 +398,22 @@ export class OfficeRoom extends Room {
       events: container.events.activeEvents(now),
       meeting: currentMeeting,
     };
-    client.send(S2C.WELCOME, welcome);
+    // Colyseus completes the matchmake/join response before the client wrapper
+    // has a concrete Room instance to bind retained onMessage handlers to. Send
+    // the first room messages on the next tick so the browser cannot miss the
+    // bootstrap packet and get stuck after a successful websocket join.
+    this.clock.setTimeout(() => {
+      client.send(S2C.WELCOME, welcome);
+
+      // Push the state of all active games to the newly joined player.
+      for (const game of this.games.values()) {
+        client.send(S2C.GAME_UPDATE, { game });
+      }
+    }, 0);
 
     // Tell everyone else this player joined (carries the resolved presence).
     const joined: PlayerJoinedPayload = { player: { ...snapshot } };
     this.broadcastExcept(client, S2C.PLAYER_JOINED, joined);
-
-    // Push the state of all active games to the newly joined player.
-    for (const game of this.games.values()) {
-      client.send(S2C.GAME_UPDATE, { game });
-    }
 
     // Join complete: subsequent presence changes for this session broadcast.
     this.joining.delete(client.sessionId);
@@ -475,6 +481,7 @@ export class OfficeRoom extends Room {
       this.handleSetStatus(client, payload),
     );
     this.onMessage(C2S.CHAT, (client, payload: ChatPayload) => this.handleChat(client, payload));
+    this.onMessage(C2S.EMOTE, (client, payload: EmotePayload) => this.handleEmote(client, payload));
     this.onMessage(C2S.JOIN_EVENT, (client, payload: JoinEventPayload) =>
       this.handleJoinEvent(client, payload),
     );

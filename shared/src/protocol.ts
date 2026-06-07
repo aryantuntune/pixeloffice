@@ -25,6 +25,7 @@ export const C2S = {
   MOVE: "move",
   SET_STATUS: "set-status",
   CHAT: "chat",
+  EMOTE: "emote",
   JOIN_EVENT: "join-event",
   LEAVE_EVENT: "leave-event",
   JOIN_MEETING: "join-meeting",
@@ -60,6 +61,10 @@ export interface ChatPayload {
   text: string;
 }
 
+export interface EmotePayload {
+  emote: Emote;
+}
+
 export interface JoinEventPayload {
   eventId: string;
 }
@@ -85,6 +90,7 @@ export const S2C = {
   PLAYER_TELEPORTED: "player-teleported",
   PRESENCE: "presence",
   CHAT: "chat",
+  EMOTE: "emote",
   EVENT_CREATED: "event-created",
   EVENT_UPDATED: "event-updated",
   EVENT_ENDED: "event-ended",
@@ -149,6 +155,11 @@ export interface ChatBroadcastPayload {
   text: string;
 }
 
+export interface EmoteBroadcastPayload {
+  sessionId: string;
+  emote: Emote;
+}
+
 export interface EventCreatedPayload {
   event: SocialEvent;
 }
@@ -191,4 +202,3 @@ export interface GameInputPayload {
 export interface GameUpdatePayload {
   game: ActiveGame;
 }
-
