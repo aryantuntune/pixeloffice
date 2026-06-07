@@ -7,6 +7,28 @@
 // ---------------------------------------------------------------------------
 
 import type { Role } from "./jwt.service";
+import { SUPER_ADMIN_EMAILS } from "./super-admins";
+
+const SUPER_ADMINS = new Set(SUPER_ADMIN_EMAILS.map((e) => e.trim().toLowerCase()));
+
+/** True when the email is a configured super admin (see super-admins.ts). */
+export function isSuperAdmin(email: string | null | undefined): boolean {
+  return !!email && SUPER_ADMINS.has(email.trim().toLowerCase());
+}
+
+/**
+ * Resolve a user's role: super admins (file) > admins (greytHR manager or
+ * ADMIN_EMAILS) > members. greytHR is the source of truth for the admin tier.
+ */
+export function resolveRole(
+  email: string,
+  opts: { isManager?: boolean; adminEmails?: Set<string> } = {},
+): Role {
+  if (isSuperAdmin(email)) return "superadmin";
+  if (opts.isManager) return "admin";
+  if (opts.adminEmails && roleForEmail(email, opts.adminEmails) === "admin") return "admin";
+  return "member";
+}
 
 /** Parse a comma-separated ADMIN_EMAILS string into a normalized email set. */
 export function parseAdminEmails(raw: string | undefined | null): Set<string> {

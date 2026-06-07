@@ -20,7 +20,7 @@ import type { AvatarId, Department } from "@pixeloffice/shared";
 import { AVATAR_IDS, DEPARTMENTS } from "@pixeloffice/shared";
 import type { AuthConfig } from "../auth/auth-config";
 import type { UserRepository } from "../repositories/user.repository";
-import { roleForEmail } from "../auth/rbac";
+import { resolveRole } from "../auth/rbac";
 import { createState, verifyState } from "../auth/oauth-state";
 import { bearerToken } from "../auth/middleware";
 import type { OAuthProviderId } from "../auth/oauth-provider";
@@ -231,7 +231,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       avatarId,
     });
 
-    const role = roleForEmail(identity.email, config.adminEmails);
+    const role = resolveRole(identity.email, { adminEmails: config.adminEmails });
     const token = config.jwt.sign({
       sub: userId,
       email: identity.email,

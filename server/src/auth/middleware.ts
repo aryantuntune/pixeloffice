@@ -24,17 +24,24 @@ export function sessionOf(res: Response): VerifiedSession | null {
   return (res.locals.session as VerifiedSession | undefined) ?? null;
 }
 
-/** Require a valid JWT. 401 on missing/invalid token. */
+/** Role hierarchy: a higher rank satisfies any lower required role. */
+const ROLE_RANK: Record<Role, number> = { member: 0, admin: 1, superadmin: 2 };
+
+/** Require a valid JWT. 401 with a clear message on missing/invalid token. */
 export function requireAuth(jwt: JwtService): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
     const token = bearerToken(req);
     if (!token) {
-      res.status(401).json({ error: "Missing bearer token" });
+      res.status(401).json({
+        error: "You're not signed in. Please sign in with greytHR to continue.",
+      });
       return;
     }
     const session = jwt.tryVerify(token);
     if (!session) {
-      res.status(401).json({ error: "Invalid or expired token" });
+      res.status(401).json({
+        error: "Your session has expired. Please sign in with greytHR again.",
+      });
       return;
     }
     res.locals.session = session;
@@ -42,14 +49,18 @@ export function requireAuth(jwt: JwtService): RequestHandler {
   };
 }
 
-/** Require a valid JWT carrying a specific role. 401 then 403. */
+/** Require a valid JWT whose role rank meets `role`. 401 then a friendly 403. */
 export function requireRole(jwt: JwtService, role: Role): RequestHandler {
   const auth = requireAuth(jwt);
   return (req: Request, res: Response, next: NextFunction): void => {
     auth(req, res, () => {
       const session = sessionOf(res);
-      if (!session || session.role !== role) {
-        res.status(403).json({ error: `Requires role: ${role}` });
+      if (!session || ROLE_RANK[session.role] < ROLE_RANK[role]) {
+        res.status(403).json({
+          error:
+            "You don't have permission for this. It needs admin access — " +
+            "ask an office creator (super admin) or your manager in greytHR.",
+        });
         return;
       }
       next();

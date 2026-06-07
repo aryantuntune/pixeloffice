@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAdminEmails, roleForEmail, roleForEmailFromEnv } from "./rbac";
+import { parseAdminEmails, resolveRole, roleForEmail, roleForEmailFromEnv } from "./rbac";
 
 describe("RBAC role derivation", () => {
   it("parses a comma-separated list, trimming + lowercasing", () => {
@@ -29,5 +29,20 @@ describe("RBAC role derivation", () => {
     const env = { ADMIN_EMAILS: "admin@example.com" } as unknown as NodeJS.ProcessEnv;
     expect(roleForEmailFromEnv("admin@example.com", env)).toBe("admin");
     expect(roleForEmailFromEnv("x@y.com", env)).toBe("member");
+  });
+});
+
+describe("resolveRole tiers", () => {
+  it("grants admin to greytHR managers", () => {
+    expect(resolveRole("a@x.com", { isManager: true })).toBe("admin");
+  });
+
+  it("grants admin to ADMIN_EMAILS members", () => {
+    expect(resolveRole("a@x.com", { adminEmails: parseAdminEmails("a@x.com") })).toBe("admin");
+  });
+
+  it("defaults to member otherwise", () => {
+    expect(resolveRole("a@x.com", {})).toBe("member");
+    expect(resolveRole("", { isManager: true })).toBe("admin");
   });
 });

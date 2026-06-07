@@ -23,7 +23,7 @@ import jwt, { type JwtPayload, type SignOptions } from "jsonwebtoken";
  */
 const SIGNING_ALGORITHM = "HS256" as const;
 
-export type Role = "admin" | "member";
+export type Role = "superadmin" | "admin" | "member";
 
 /** The claims we put in (and read back from) our JWTs. */
 export interface SessionClaims {
@@ -133,7 +133,7 @@ export class JwtService {
     if (typeof email !== "string") {
       throw new Error("Invalid token: missing email");
     }
-    if (role !== "admin" && role !== "member") {
+    if (role !== "superadmin" && role !== "admin" && role !== "member") {
       throw new Error("Invalid token: bad role");
     }
 
