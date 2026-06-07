@@ -747,40 +747,62 @@ export class OfficeScene extends Phaser.Scene {
     });
   }
 
-  /** Pop an emoji bubble above an avatar; replaces any active one, fades after EMOTE_MS. */
+  /** Float a small cloud of the emoji up from the avatar's head, drifting apart
+   *  and fading into thin air (Google Meet / Zoom / YouTube-Live reaction style). */
   apiShowEmote(sessionId: string, emote: string): void {
     const a = this.avatars.get(sessionId);
     if (!a) return;
-    a.emoteTimer?.remove();
-    a.emote?.destroy();
-
     const glyph = EMOTE_EMOJI[emote as Emote] ?? emote;
-    const label = this.add.text(0, 0, glyph, {
-      fontFamily: '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif',
-      fontSize: "24px",
-    });
-    label.setOrigin(0.5, 0.5);
-    const pad = 6;
-    const size = Math.max(label.width, label.height) + pad * 2;
-    const bg = this.add.graphics();
-    bg.fillStyle(0x101620, 0.92);
-    bg.fillRoundedRect(-size / 2, -size / 2, size, size, 8);
-    bg.fillTriangle(-5, size / 2 - 1, 5, size / 2 - 1, 0, size / 2 + 6);
+    const font = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+    const baseX = a.sprite.x;
+    const baseY = a.sprite.y - TILE * 0.9;
+    const count = this.reducedMotion ? 1 : 6;
 
-    const container = this.add.container(a.sprite.x, a.sprite.y - TILE * 1.3, [bg, label]);
-    container.setDepth(DEPTH_OVERLAY + 2);
-    a.emote = container;
+    for (let i = 0; i < count; i++) {
+      // Stagger spawns so they rise as a stream rather than a single clump.
+      this.time.delayedCall(i * 90, () => {
+        if (!this.avatars.has(sessionId)) return;
+        const startX = baseX + (Math.random() - 0.5) * 26;
+        const label = this.add.text(startX, baseY, glyph, {
+          fontFamily: font,
+          fontSize: `${16 + Math.round(Math.random() * 12)}px`,
+        });
+        label.setOrigin(0.5, 0.5).setDepth(DEPTH_OVERLAY + 2);
 
-    if (!this.reducedMotion) {
-      container.setScale(0.4);
-      this.tweens.add({ targets: container, scale: 1, duration: 220, ease: "Back.easeOut" });
+        const rise = 80 + Math.random() * 70;
+        const drift = (Math.random() - 0.5) * 60;
+        const dur = EMOTE_MS * (0.6 + Math.random() * 0.4);
+
+        if (this.reducedMotion) {
+          this.tweens.add({
+            targets: label,
+            y: baseY - rise,
+            alpha: 0,
+            duration: dur,
+            onComplete: () => label.destroy(),
+          });
+          return;
+        }
+
+        // Pop in, rise + drift outward, then dissolve in the final stretch.
+        label.setScale(0.3);
+        this.tweens.add({ targets: label, scale: 1, duration: 180, ease: "Back.easeOut" });
+        this.tweens.add({
+          targets: label,
+          x: startX + drift,
+          y: baseY - rise,
+          duration: dur,
+          ease: "Sine.easeOut",
+        });
+        this.tweens.add({
+          targets: label,
+          alpha: 0,
+          delay: dur * 0.45,
+          duration: dur * 0.55,
+          onComplete: () => label.destroy(),
+        });
+      });
     }
-
-    a.emoteTimer = this.time.delayedCall(EMOTE_MS, () => {
-      container.destroy();
-      a.emote = undefined;
-      a.emoteTimer = undefined;
-    });
   }
 
   /** Apply a profile change (name / department / avatar) to a player avatar. */
