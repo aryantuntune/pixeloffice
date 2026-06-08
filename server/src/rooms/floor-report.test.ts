@@ -56,6 +56,32 @@ function applyFloorReport(
   return out;
 }
 
+/**
+ * Mirror of OfficeRoom.applyFloorReportBySession (the PAIR CODE path): resolve a
+ * sessionId DIRECTLY (no IP), then run the SAME opt-in gate + consented change.
+ * The route resolved code -> sessionId upstream; the IP is irrelevant here.
+ */
+function applyFloorToSession(
+  sessions: Session[],
+  sessionId: string,
+  floorId: string,
+  validFloorIds: Set<string>,
+): Outcome {
+  const out: Outcome = { matched: 0, floors: {}, places: {} };
+  for (const s of sessions) out.floors[s.sessionId] = s.floorId;
+  for (const s of sessions) out.places[s.sessionId] = undefined;
+
+  if (!validFloorIds.has(floorId)) return out;
+  const s = sessions.find((x) => x.sessionId === sessionId);
+  if (!s) return out;
+  if (s.optedIn !== true) return out; // OPT-IN gate (IP-independent)
+  if (s.isNpc) return out;
+  out.places[s.sessionId] = "OFFICE";
+  if (s.floorId !== floorId) out.floors[s.sessionId] = floorId; // consented change
+  out.matched += 1;
+  return out;
+}
+
 const FLOORS = new Set(["ground", "floor-1", "floor-2"]);
 
 describe("applyFloorReport gate", () => {
@@ -118,6 +144,30 @@ describe("applyFloorReport gate", () => {
       FLOORS,
     );
     expect(r.matched).toBe(0);
+  });
+
+  it("applies via PAIR CODE to the exact session regardless of IP", () => {
+    // Mirror of OfficeRoom.applyFloorReportBySession: the pair-code path resolves
+    // a sessionId directly (no IP), then runs the SAME opt-in gate + change. A
+    // companion behind a different egress IP than the browser still moves THIS
+    // user — the whole point of the pairing code.
+    const sessions: Session[] = [
+      { sessionId: "mine", ip: "172.17.0.9", optedIn: true, floorId: "floor-2" },
+    ];
+    const r = applyFloorToSession(sessions, "mine", "ground", FLOORS);
+    expect(r.matched).toBe(1);
+    expect(r.floors.mine).toBe("ground"); // moved even though no IP matched
+    expect(r.places.mine).toBe("OFFICE");
+  });
+
+  it("PAIR CODE for a NOT-opted-in session is a no-op", () => {
+    const sessions: Session[] = [
+      { sessionId: "mine", ip: "10.0.0.5", optedIn: false, floorId: "floor-2" },
+    ];
+    const r = applyFloorToSession(sessions, "mine", "ground", FLOORS);
+    expect(r.matched).toBe(0);
+    expect(r.floors.mine).toBe("floor-2"); // never moved
+    expect(r.places.mine).toBeUndefined();
   });
 
   it("is a no-op for an unknown floor id or absent IP", () => {

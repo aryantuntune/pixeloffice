@@ -67,6 +67,7 @@ import {
   createSsidFloorResolver,
   type SsidFloorResolver,
 } from "./location/ssid-floor";
+import { PairCodeStore } from "./location/pair-code.store";
 import type { OfficeRoom } from "./rooms/office.room";
 
 // --- Synchronous, framework-free services (shared by REST + room) ----------
@@ -130,6 +131,14 @@ const ssidFloor: SsidFloorResolver = createSsidFloorResolver(
   process.env,
   maps.getActiveBuilding().floors.map((f) => f.id),
 );
+
+// --- Floor-sync PAIRING CODE store (companion <-> session, IP-independent) --
+// Minted when a user enables floor sync; the user pastes it into the companion
+// (FLOOR_SYNC_PAIR_CODE) so a floor report resolves to THAT session regardless
+// of IP (fixes NAT / Docker / localhost multi-tab collisions). PRIVACY: a code
+// maps ONLY to {sessionId,userId} in memory with a TTL; never logged/persisted,
+// invalidated on disable/leave. A resolved code is still opt-in gated downstream.
+const pairCodes = new PairCodeStore();
 
 // --- Ambient NPCs (so the office never feels empty) ------------------------
 // Framework-free behavior engine. Owns a seeded PRNG (NPC_SEED, default 42) so
@@ -247,6 +256,14 @@ export const container = {
    * Never logs/persists the SSID (AGENTS.md Principle 1).
    */
   ssidFloor,
+  /**
+   * Floor-sync PAIRING CODE store. Minted on SET_LOCATION_SYNC{enabled:true} and
+   * sent to that client (S2C.FLOOR_SYNC_CODE); the companion echoes it back as
+   * body.pairCode so POST /api/location/floor-report resolves to the exact
+   * session regardless of IP. PRIVACY: in-memory {sessionId,userId}+TTL only;
+   * never logged/persisted; invalidated on disable/leave (AGENTS.md Principle 1).
+   */
+  pairCodes,
   auth,
   /** Auth config (providers map, jwt service, RBAC, AUTH_REQUIRED gate). */
   authConfig,

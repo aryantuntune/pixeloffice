@@ -39,6 +39,7 @@ import {
   type GameUpdatePayload,
   type FloorChangedPayload,
   type LocationPayload,
+  type FloorSyncCodePayload,
   type Building,
   type Floor,
   type PlayerSnapshot,
@@ -489,6 +490,9 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
       // Both are handled idempotently in the bridge below. No-op pre-connect.
       onLocationSync: (enabled) => {
         activeConn?.send(C2S.SET_LOCATION_SYNC, { enabled });
+        // Turning sync off invalidates the server-side pairing code; clear the
+        // one shown in Settings so a stale code is never displayed/copied.
+        if (!enabled) settings?.setPairCode(null);
       },
       onShowTour: () => onboarding?.start(),
     });
@@ -640,6 +644,15 @@ function registerBridge(conn: Connection): void {
   conn.on<LocationPayload>(S2C.LOCATION, ({ sessionId, place, cleared }) => {
     if (!store) return;
     store.setPlace(sessionId, cleared ? undefined : place);
+  });
+
+  // Companion PAIRING CODE for THIS session (sent right after we enabled floor
+  // sync). Surface it in Settings: the WiFi help block then shows the exact
+  // companion command WITH the code, so a floor report is tied to this session
+  // regardless of IP (NAT / VPN / Docker / multiple localhost tabs). Transient
+  // per-session — never persisted.
+  conn.on<FloorSyncCodePayload>(S2C.FLOOR_SYNC_CODE, ({ code }) => {
+    settings?.setPairCode(code);
   });
 
   // Floor change: sent ONLY to the player whose own avatar stepped onto a portal

@@ -25,6 +25,11 @@ const execFileAsync = promisify(execFile);
 const SERVER = (process.env.FLOOR_SYNC_SERVER || "http://localhost:2567").replace(/\/+$/, "");
 const INTERVAL = clampInterval(parseInt(process.env.FLOOR_SYNC_INTERVAL || "", 10), 20000);
 const SECRET = process.env.FLOOR_SYNC_SECRET || "";
+// PAIRING CODE: shown in PixelOffice Settings after you enable "Sync my floor".
+// When set, it is sent as body.pairCode so the server ties this report to YOUR
+// exact session regardless of IP (works behind NAT, a VPN, Docker, or with
+// several browser tabs on one machine — where the IP match alone is ambiguous).
+const PAIR_CODE = (process.env.FLOOR_SYNC_PAIR_CODE || "").trim();
 const FAKE_SSID = process.env.FLOOR_SYNC_FAKE_SSID || "";
 const ENDPOINT = SERVER + "/api/location/floor-report";
 
@@ -113,7 +118,10 @@ async function readSsid() {
 function postReport(ssid) {
   return new Promise((resolve, reject) => {
     const url = new URL(ENDPOINT);
-    const body = JSON.stringify(SECRET ? { ssid, secret: SECRET } : { ssid });
+    const payload = { ssid };
+    if (PAIR_CODE) payload.pairCode = PAIR_CODE;
+    if (SECRET) payload.secret = SECRET;
+    const body = JSON.stringify(payload);
     const transport = url.protocol === "https:" ? https : http;
     const req = transport.request(
       {
@@ -200,10 +208,17 @@ function startupHelp() {
   console.log(`  endpoint : ${ENDPOINT}`);
   console.log(`  interval : ${INTERVAL} ms`);
   console.log(`  secret   : ${SECRET ? "set" : "(none)"}`);
+  console.log(`  pairCode : ${PAIR_CODE ? `set (${PAIR_CODE}) — ties reports to your session, any IP` : "(none) — falls back to matching by your machine's IP"}`);
   if (FAKE_SSID) console.log(`  FAKE SSID: ${FAKE_SSID} (testing override; OS WiFi not read)`);
   console.log("  privacy  : reads only the WiFi name; nothing is stored. Enable");
   console.log('             "Sync my floor" in PixelOffice Settings for it to take effect.');
-  console.log("  note     : run this on the SAME machine as your PixelOffice browser tab.");
+  if (!PAIR_CODE) {
+    console.log("  tip      : after enabling floor sync, copy the PAIRING CODE shown in");
+    console.log("             Settings and re-run with FLOOR_SYNC_PAIR_CODE=<code> so this");
+    console.log("             works behind NAT / a VPN / Docker / multiple browser tabs.");
+  }
+  console.log("  note     : run this on the SAME machine as your PixelOffice browser tab");
+  console.log("             (or set FLOOR_SYNC_PAIR_CODE to pair without sharing an IP).");
   console.log("  (Ctrl+C to stop.)");
 }
 

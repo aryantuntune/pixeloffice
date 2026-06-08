@@ -14,6 +14,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createLocationRouter } from "./location.routes";
 import { createSsidFloorResolver } from "../location/ssid-floor";
+import { PairCodeStore } from "../location/pair-code.store";
 
 async function boot(app: express.Express): Promise<{ server: Server; base: string }> {
   const server = createServer(app);
@@ -25,10 +26,16 @@ async function boot(app: express.Express): Promise<{ server: Server; base: strin
 /** A fake room recording applyFloorReport calls; returns a configurable count. */
 function fakeRoom(matched: number, floorIds = ["ground", "floor-1", "floor-2"]) {
   const calls: Array<{ clientIp: string | undefined; floorId: string }> = [];
+  const sessionCalls: Array<{ sessionId: string; floorId: string }> = [];
   return {
     calls,
+    sessionCalls,
     applyFloorReport(clientIp: string | undefined, floorId: string): number {
       calls.push({ clientIp, floorId });
+      return matched;
+    },
+    applyFloorReportBySession(sessionId: string, floorId: string): number {
+      sessionCalls.push({ sessionId, floorId });
       return matched;
     },
     floorIds(): string[] {
@@ -127,6 +134,67 @@ describe("POST /api/location/floor-report", () => {
       const r = await post(base, { ssid: "KALVIUM2F" });
       expect(r.status).toBe(200);
       expect(r.json.matched).toBe(1);
+    });
+  });
+
+  describe("pairing code (IP-independent)", () => {
+    it("a valid pairCode resolves to THAT session, ignoring IP", async () => {
+      const room = fakeRoom(1);
+      const pairCodes = new PairCodeStore();
+      const code = pairCodes.mint("sess-1", "user-1", Date.now());
+      const { server: s, base } = await boot(
+        makeApp({ getRoom: () => room, resolver, pairCodes }),
+      );
+      server = s;
+      const r = await post(base, { ssid: "Hustle@KALVIUM1F5G", pairCode: code });
+      expect(r.status).toBe(200);
+      expect(r.json).toEqual({ floorId: "floor-1", matched: 1 });
+      // Applied by SESSION, not by IP: the IP path was never taken.
+      expect(room.sessionCalls).toEqual([{ sessionId: "sess-1", floorId: "floor-1" }]);
+      expect(room.calls).toHaveLength(0);
+    });
+
+    it("a pairCode for a NOT-opted-in session is a no-op (matched=0)", async () => {
+      // The room enforces the opt-in gate: applyFloorReportBySession returns 0.
+      const room = fakeRoom(0);
+      const pairCodes = new PairCodeStore();
+      const code = pairCodes.mint("sess-x", "user-x", Date.now());
+      const { server: s, base } = await boot(
+        makeApp({ getRoom: () => room, resolver, pairCodes }),
+      );
+      server = s;
+      const r = await post(base, { ssid: "KALVIUM2F", pairCode: code });
+      expect(r.json).toEqual({ floorId: "floor-2", matched: 0 });
+      expect(room.sessionCalls).toEqual([{ sessionId: "sess-x", floorId: "floor-2" }]);
+    });
+
+    it("an unknown/expired pairCode falls back to the IP match", async () => {
+      const room = fakeRoom(1);
+      const pairCodes = new PairCodeStore();
+      const { server: s, base } = await boot(
+        makeApp({ getRoom: () => room, resolver, pairCodes }),
+      );
+      server = s;
+      const r = await post(base, { ssid: "KALVIUM2F", pairCode: "ZZZZZZ" });
+      expect(r.status).toBe(200);
+      expect(r.json).toEqual({ floorId: "floor-2", matched: 1 });
+      // Fell through to the IP path (no session call).
+      expect(room.sessionCalls).toHaveLength(0);
+      expect(room.calls).toHaveLength(1);
+    });
+
+    it("still enforces the secret when set, even with a valid pairCode", async () => {
+      const room = fakeRoom(1);
+      const pairCodes = new PairCodeStore();
+      const code = pairCodes.mint("sess-1", "user-1", Date.now());
+      const { server: s, base } = await boot(
+        makeApp({ getRoom: () => room, resolver, pairCodes, secret: "s3cret" }),
+      );
+      server = s;
+      expect((await post(base, { ssid: "KALVIUM2F", pairCode: code })).status).toBe(401);
+      expect(room.sessionCalls).toHaveLength(0);
+      const ok = await post(base, { ssid: "KALVIUM2F", pairCode: code, secret: "s3cret" });
+      expect(ok.json).toEqual({ floorId: "floor-2", matched: 1 });
     });
   });
 });

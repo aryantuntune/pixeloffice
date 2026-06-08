@@ -24,9 +24,11 @@ This is deliberately small and boring:
 ## Requirements
 
 - Node.js 18+ (uses only built-in modules — no `npm install` needed).
-- Must run on the **same machine** as your PixelOffice browser tab. The server
-  matches the report to your browser session by LAN IP, so a different machine
-  won't affect you.
+- Either run it on the **same machine** as your PixelOffice browser tab (the
+  server then matches the report to your session by LAN IP), **or** pass a
+  **pairing code** (`FLOOR_SYNC_PAIR_CODE`, below) so it matches by session
+  regardless of IP. The pairing code is what makes this work behind shared
+  office WiFi / NAT, a VPN, Docker, or with several browser tabs.
 
 ## Run it
 
@@ -52,12 +54,36 @@ Then open PixelOffice in your browser, go to Settings, and enable
 **"Sync my floor to where I'm sitting"**. That's it — when you move floors (and
 connect to that floor's WiFi), your avatar follows.
 
+## Pairing code (recommended)
+
+By default the server matches a report to your browser session by **LAN IP**.
+That breaks when several people share one egress IP (office WiFi / NAT, a VPN),
+in Docker, or when you have multiple browser tabs on `localhost` in dev — you
+can show **Remote** even with the toggle on.
+
+To fix that, use a **pairing code**:
+
+1. In PixelOffice **Settings**, enable **"Sync my floor"**. A short code (e.g.
+   `FA9UES`) appears under **WiFi auto-detect**, along with the exact command.
+2. Run the companion with that code:
+
+   ```sh
+   FLOOR_SYNC_SERVER=http://<office-server>:2567 \
+   FLOOR_SYNC_PAIR_CODE=FA9UES \
+   node companion/floor-sync.mjs
+   ```
+
+Now reports are tied to **your** session regardless of IP. The code is minted
+per session, expires, and is invalidated when you turn sync off or disconnect.
+It is never stored on disk and never logged by the server.
+
 ## Configuration (env)
 
 | Var | Default | Meaning |
 |---|---|---|
 | `FLOOR_SYNC_SERVER` | `http://localhost:2567` | Base URL of your PixelOffice server. |
 | `FLOOR_SYNC_INTERVAL` | `20000` | How often (ms) to check the SSID. Min 1000. |
+| `FLOOR_SYNC_PAIR_CODE` | _(unset)_ | Pairing code shown in PixelOffice Settings after you enable floor sync. When set, sent as `body.pairCode` so reports match your session by code instead of IP (works behind shared WiFi / NAT / VPN / Docker / multiple tabs). |
 | `FLOOR_SYNC_SECRET` | _(unset)_ | Optional shared secret, sent as `body.secret`. Set this only if your operator configured `FLOOR_SYNC_SECRET` on the server. |
 | `FLOOR_SYNC_FAKE_SSID` | _(unset)_ | Testing override: report this literal SSID instead of reading WiFi (lets the companion run headless / in CI). |
 
@@ -77,7 +103,9 @@ quiet and keeps polling — nothing breaks.
 ## Troubleshooting
 
 - **`matched: 0` in the logs / nothing happens:** you haven't enabled "Sync my
-  floor" in PixelOffice Settings, or no browser tab is open on this machine.
+  floor" in PixelOffice Settings, or no browser tab is open on this machine. If
+  you're behind shared WiFi / a VPN / Docker / multiple tabs, set
+  `FLOOR_SYNC_PAIR_CODE` to the code shown in Settings (see "Pairing code").
 - **`401` rejected:** the server requires `FLOOR_SYNC_SECRET`; set it to match.
 - **"could not reach ..." warnings:** the server URL is wrong or the server is
   down. The companion keeps retrying.

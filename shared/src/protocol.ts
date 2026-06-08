@@ -143,7 +143,33 @@ export const S2C = {
    * turning it OFF clears the tag and NEVER moves the avatar.
    */
   LOCATION: "location",
+  /**
+   * A short, human-typable PAIRING CODE for the companion floor-sync helper.
+   * Sent ONLY to a client right after THAT client enables floor sync
+   * (C2S.SET_LOCATION_SYNC{enabled:true}), and re-sent on (re)join when the
+   * session is already enabled. The user pastes this code into the companion
+   * (FLOOR_SYNC_PAIR_CODE); the companion includes it as body.pairCode in its
+   * POST /api/location/floor-report so the server can tie the report to THIS
+   * exact session regardless of IP — fixing NAT / Docker / localhost multi-tab
+   * collisions where the IP match is ambiguous. See FloorSyncCodePayload.
+   *
+   * PRIVACY: the code maps ONLY to {sessionId,userId} in transient in-memory
+   * state with a TTL; it is never logged or persisted, and is invalidated on
+   * disable / leave. There is no new C2S message for this.
+   */
+  FLOOR_SYNC_CODE: "floor-sync-code",
 } as const;
+
+/**
+ * The pairing code for the companion floor-sync helper (S2C.FLOOR_SYNC_CODE).
+ * Backward-compatible additive message: older clients ignore the unknown type
+ * (the room's "*" handler also tolerates it the other direction). The client
+ * stores `code` and surfaces it in Settings as the exact companion command.
+ */
+export interface FloorSyncCodePayload {
+  /** A short, human-typable pairing code (e.g. 6 chars A-Z0-9). */
+  code: string;
+}
 
 /** A floor's identity as advertised to the client (no geometry — fetched via /api/maps). */
 export interface FloorSummary {

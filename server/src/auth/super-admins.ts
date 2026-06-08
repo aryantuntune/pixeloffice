@@ -4,5 +4,5 @@
 
 export const SUPER_ADMIN_EMAILS: string[] = [
   "diptayan.jash@kalvium.com",
-  "aryan@kalvium.com",
+  "aryan.tuntune@kalvium.com",
 ];

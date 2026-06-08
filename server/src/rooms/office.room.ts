@@ -57,6 +57,7 @@ import {
   type SetStatusPayload,
   type SetLocationSyncPayload,
   type LocationPayload,
+  type FloorSyncCodePayload,
   type SocialEvent,
   type ToastPayload,
   type WelcomePayload,
@@ -319,6 +320,8 @@ export class OfficeRoom extends Room {
       const now = Date.now();
       container.presence.tick(now);
       container.events.tick(now);
+      // Sweep expired pairing codes (privacy: nothing stale lingers in memory).
+      container.pairCodes.prune(now);
       // Advance ambient NPCs PER FLOOR and translate their effects to wire
       // messages (floor-scoped). The NPC service is framework-free; the room is
       // the only Colyseus seam. Events are floor-scoped, so each floor's NPCs
@@ -621,6 +624,10 @@ export class OfficeRoom extends Room {
     // the session — it was never logged or persisted in the first place).
     this.sessionIp.delete(sessionId);
     this.locationSync.delete(sessionId);
+    // Invalidate any companion pairing code so it cannot resolve to a gone
+    // session (privacy: the transient code -> {sessionId,userId} entry is
+    // dropped the moment the session leaves).
+    container.pairCodes.invalidateSession(sessionId);
     this.homeSeat.delete(sessionId);
     this.meetingSlots.releaseEverywhere(sessionId);
     this.moveBuckets.delete(sessionId);
@@ -898,8 +905,10 @@ export class OfficeRoom extends Room {
 
     if (!payload.enabled) {
       // Turn sync OFF: clear the tag, tell co-located clients to drop the badge.
-      // Never moves the avatar.
+      // Never moves the avatar. Invalidate any pairing code (privacy: the
+      // code -> {sessionId,userId} entry must not outlive the opt-in).
       this.locationSync.set(client.sessionId, false);
+      container.pairCodes.invalidateSession(client.sessionId);
       if (snap.place === undefined) return; // already off — nothing to broadcast
       snap.place = undefined;
       const cleared: LocationPayload = {
@@ -913,6 +922,20 @@ export class OfficeRoom extends Room {
 
     // Turn sync ON: classify the transient IP (never logged/persisted).
     this.locationSync.set(client.sessionId, true);
+
+    // Mint (or refresh) this session's companion PAIRING CODE and hand it to
+    // THIS client only. The user pastes it into the companion
+    // (FLOOR_SYNC_PAIR_CODE) so a floor report resolves to THIS exact session
+    // regardless of IP (fixes NAT / Docker / localhost multi-tab collisions).
+    // PRIVACY: the code maps only to {sessionId,userId} in memory with a TTL;
+    // it is never logged here (we do NOT include it in any log line).
+    const userId = this.sessionUser.get(client.sessionId);
+    if (userId) {
+      const code = container.pairCodes.mint(client.sessionId, userId, Date.now());
+      const codePayload: FloorSyncCodePayload = { code };
+      client.send(S2C.FLOOR_SYNC_CODE, codePayload);
+    }
+
     const ip = this.sessionIp.get(client.sessionId);
     const place = container.floorLocation.classify(ip);
     snap.place = place;
@@ -1191,30 +1214,57 @@ export class OfficeRoom extends Room {
     const sessionIds = Array.from(this.sessionIp.keys());
     for (const sessionId of sessionIds) {
       if (this.sessionIp.get(sessionId) !== clientIp) continue;
-      // OPT-IN gate: only act for sessions that explicitly enabled floor sync.
-      if (this.locationSync.get(sessionId) !== true) continue;
-      const snap = this.players.get(sessionId);
-      if (!snap || snap.isNpc) continue;
-      const client = this.clientFor(sessionId);
-      if (!client) continue;
-
-      // A floor report means the user is physically in the office.
-      snap.place = "OFFICE";
-      const currentFloorId = snap.floorId ?? this.groundFloorId;
-
-      if (currentFloorId !== floorId) {
-        // Consented floor change (the user opted in) — reuse elevator machinery.
-        const target = this.floors.get(floorId)!;
-        const land = this.freeTileNear(target, target.spawn.x, target.spawn.y);
-        this.changeFloor(client, snap, currentFloorId, floorId, land.x, land.y, snap.dir);
-      }
-
-      // Broadcast the Office tag on the (possibly new) floor (co-located only).
-      const location: LocationPayload = { sessionId, place: "OFFICE" };
-      this.broadcastToFloor(snap.floorId ?? this.groundFloorId, S2C.LOCATION, location);
-      matched += 1;
+      matched += this.applyFloorToSession(sessionId, floorId);
     }
     return matched;
+  }
+
+  /**
+   * Apply an SSID-derived floor report to ONE explicitly identified session,
+   * IGNORING IP. The floor-report HTTP route calls this when the companion sent
+   * a valid PAIRING CODE (S2C.FLOOR_SYNC_CODE), which ties the report to the
+   * exact session that minted it — fixing the IP-match ambiguity behind NAT, a
+   * VPN egress, Docker, or several localhost tabs.
+   *
+   * The opt-in gate + consented-change + privacy rules are IDENTICAL to the
+   * IP-matched path (it delegates to the same applyFloorToSession helper):
+   * a code for a NOT-opted-in session is a benign no-op (returns 0). The caller
+   * resolved code -> sessionId; this method never sees the code, IP, or SSID.
+   */
+  applyFloorReportBySession(sessionId: string, floorId: string): number {
+    if (!this.floors.has(floorId)) return 0;
+    return this.applyFloorToSession(sessionId, floorId);
+  }
+
+  /**
+   * Apply the resolved floor to a single session IF it has opted in. Shared by
+   * the IP-matched and pair-code paths. Returns 1 when applied, else 0. Performs
+   * the consented floor change (when the floor differs) + the S2C.LOCATION tag.
+   * PRIVACY: no IP/SSID/code is referenced here — only the live session state.
+   */
+  private applyFloorToSession(sessionId: string, floorId: string): number {
+    // OPT-IN gate: only act for sessions that explicitly enabled floor sync.
+    if (this.locationSync.get(sessionId) !== true) return 0;
+    const snap = this.players.get(sessionId);
+    if (!snap || snap.isNpc) return 0;
+    const client = this.clientFor(sessionId);
+    if (!client) return 0;
+
+    // A floor report means the user is physically in the office.
+    snap.place = "OFFICE";
+    const currentFloorId = snap.floorId ?? this.groundFloorId;
+
+    if (currentFloorId !== floorId) {
+      // Consented floor change (the user opted in) — reuse elevator machinery.
+      const target = this.floors.get(floorId)!;
+      const land = this.freeTileNear(target, target.spawn.x, target.spawn.y);
+      this.changeFloor(client, snap, currentFloorId, floorId, land.x, land.y, snap.dir);
+    }
+
+    // Broadcast the Office tag on the (possibly new) floor (co-located only).
+    const location: LocationPayload = { sessionId, place: "OFFICE" };
+    this.broadcastToFloor(snap.floorId ?? this.groundFloorId, S2C.LOCATION, location);
+    return 1;
   }
 
   /** Other players (excluding `sessionId`) currently on `floorId`. */

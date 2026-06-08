@@ -54,6 +54,14 @@ export interface SettingsHandle {
   applyToGame(): void;
   /** Current persisted values (used to seed minimap/roster NPC filtering). */
   values(): SettingsValues;
+  /**
+   * Surface the companion PAIRING CODE the server minted for this session
+   * (S2C.FLOOR_SYNC_CODE), received after the user enabled floor sync. The WiFi
+   * help block then shows the exact companion command WITH the code, so a report
+   * is tied to THIS session regardless of IP (NAT / VPN / Docker / multi-tab).
+   * Per-session + transient: not persisted. Pass null to clear it (sync off).
+   */
+  setPairCode(code: string | null): void;
   destroy(): void;
 }
 
@@ -218,12 +226,53 @@ export function mountSettings(parent: HTMLElement, cb: SettingsCallbacks): Setti
     "Your floor updates automatically if you run the tiny companion helper on this machine:";
   const wifiCmd = document.createElement("code");
   wifiCmd.className = "settings-wifi-cmd";
-  wifiCmd.textContent = `FLOOR_SYNC_SERVER=${serverHttpBase()} node companion/floor-sync.mjs`;
+  // Copy hint: the box is `user-select: all` (click selects all) as a no-JS
+  // fallback; clicking also copies to the clipboard when available, flashing a
+  // brief "Copied" confirmation. Pure UI sugar — no network, no business logic.
+  wifiCmd.title = "Click to copy";
+  let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+  wifiCmd.addEventListener("click", () => {
+    const text = wifiCmd.textContent ?? "";
+    if (!text) return;
+    void navigator.clipboard?.writeText(text).then(
+      () => {
+        wifiCmd.classList.add("is-copied");
+        if (copyResetTimer) clearTimeout(copyResetTimer);
+        copyResetTimer = setTimeout(() => wifiCmd.classList.remove("is-copied"), 1400);
+      },
+      () => {
+        /* clipboard blocked (insecure context / denied) — user-select:all still
+           lets them copy manually; no error surfaced. */
+      },
+    );
+  });
+  // The per-session PAIRING CODE the server minted (S2C.FLOOR_SYNC_CODE). When
+  // present, fold it into the command (FLOOR_SYNC_PAIR_CODE=...) so the report is
+  // tied to THIS session regardless of IP — the fix for NAT / VPN / Docker /
+  // multiple localhost tabs sharing one egress IP. Null = no code yet (the user
+  // just enabled, or sync is off): show the plain IP-fallback command.
+  let pairCode: string | null = null;
+  const renderWifiCmd = (): void => {
+    const base = `FLOOR_SYNC_SERVER=${serverHttpBase()}`;
+    wifiCmd.textContent = pairCode
+      ? `${base} FLOOR_SYNC_PAIR_CODE=${pairCode} node companion/floor-sync.mjs`
+      : `${base} node companion/floor-sync.mjs`;
+  };
+  renderWifiCmd();
+  const wifiPair = document.createElement("p");
+  wifiPair.className = "settings-wifi-pair";
+  const renderPairNote = (): void => {
+    wifiPair.textContent = pairCode
+      ? `Pairing code ${pairCode} — included above so this works even behind shared WiFi/NAT, a VPN, Docker, or multiple tabs.`
+      : "";
+    wifiPair.hidden = !pairCode;
+  };
+  renderPairNote();
   const wifiPrivacy = document.createElement("p");
   wifiPrivacy.className = "settings-wifi-privacy";
   wifiPrivacy.textContent =
     "Only your WiFi name is read on your machine; nothing is stored.";
-  wifiBody.append(wifiHelp, wifiCmd, wifiPrivacy);
+  wifiBody.append(wifiHelp, wifiCmd, wifiPair, wifiPrivacy);
   wifi.append(wifiSummary, wifiBody);
   // Visibility tracks the opt-in toggle; collapse when hidden so reopening the
   // section is a deliberate act each time it's shown.
@@ -287,6 +336,11 @@ export function mountSettings(parent: HTMLElement, cb: SettingsCallbacks): Setti
     },
     values(): SettingsValues {
       return { ...state };
+    },
+    setPairCode(code: string | null): void {
+      pairCode = code && code.trim().length > 0 ? code.trim() : null;
+      renderWifiCmd();
+      renderPairNote();
     },
     destroy(): void {
       document.removeEventListener("click", onDocClick);
