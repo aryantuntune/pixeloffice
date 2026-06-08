@@ -16,6 +16,7 @@
 // Must be first: load .env before the container reads process.env.
 import "./load-env";
 import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
 import express from "express";
 import cors from "cors";
 import { Server } from "colyseus";
@@ -49,7 +50,37 @@ async function main(): Promise<void> {
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean);
-  app.use(cors({ origin: corsOrigins }));
+  // Vite dev (5173) and preview (4173) serve the client from a SEPARATE origin
+  // than the API, so every REST/login call is cross-origin and triggers a CORS
+  // preflight. Over a LAN the page origin is http://<lan-ip>:5173 — NOT in the
+  // static allow-list — so without accepting it every API/login call fails with
+  // an opaque "no response" (the preflight is rejected). In DEV ONLY we also
+  // allow any host on the Vite dev/preview ports so `npm run dev` works from any
+  // device on the network. In production the client is served same-origin
+  // (SERVE_CLIENT) so this relaxation is gated OFF — prod uses only the explicit
+  // CORS_ORIGINS/CLIENT_APP_URL allow-list, identical to before this change.
+  const VITE_DEV_PORTS = new Set(["5173", "4173"]);
+  const corsAllowList = new Set(corsOrigins);
+  const allowViteDevPorts =
+    process.env.NODE_ENV !== "production" && !shouldServeClient();
+  app.use(
+    cors({
+      origin(origin, callback) {
+        // No Origin header = non-browser or same-origin (curl, health checks,
+        // server-to-server) — always allow.
+        if (!origin) return callback(null, true);
+        if (corsAllowList.has(origin)) return callback(null, true);
+        if (allowViteDevPorts) {
+          try {
+            if (VITE_DEV_PORTS.has(new URL(origin).port)) return callback(null, true);
+          } catch {
+            /* malformed Origin — fall through to deny */
+          }
+        }
+        callback(null, false);
+      },
+    }),
+  );
   app.use(express.json());
 
   // Behind a vetted reverse proxy (the single-container prod deploy), trust the
@@ -189,9 +220,14 @@ async function main(): Promise<void> {
 
   gameServer.define(ROOM_NAME, OfficeRoom);
 
+  // Bind on all interfaces (Node's default for listen(PORT)) so LAN devices can
+  // reach the API/ws at http://<lan-ip>:PORT, matching the client's host-derived
+  // dial target. Log the LAN address too so it's obvious the network is exposed.
   httpServer.listen(PORT, () => {
+    const lan = lanAddress();
     console.log(
       `[PixelOffice] server listening on http://localhost:${PORT} ` +
+        (lan ? `(LAN: http://${lan}:${PORT}) ` : "") +
         `(ws room "${ROOM_NAME}", REST under /api)`,
     );
   });
@@ -221,4 +257,15 @@ function readPort(): number {
   const raw = process.env.PORT;
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SERVER_PORT;
+}
+
+/** First non-internal IPv4 address (the LAN IP teammates dial), or null if
+ *  none is found. Display-only — the server already binds on all interfaces. */
+function lanAddress(): string | null {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family === "IPv4" && !addr.internal) return addr.address;
+    }
+  }
+  return null;
 }

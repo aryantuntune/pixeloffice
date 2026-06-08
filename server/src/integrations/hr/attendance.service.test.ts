@@ -6,6 +6,7 @@ import type {
   DepartmentMapping,
   EmployeeRecord,
   HrAdapter,
+  RemoteAttendanceSnapshot,
 } from "./hr-adapter";
 
 const T0 = 1_000_000;
@@ -313,6 +314,125 @@ describe("AttendanceService — GreytHR employee-code resolution", () => {
     const svc = new AttendanceService(adapter);
     await svc.checkIn("emp_raw", T0);
     expect(adapter.swipes).toEqual(["emp_raw"]);
+  });
+});
+
+describe("AttendanceService — describeStatus (live reconciliation)", () => {
+  it("falls back to local state when the adapter exposes no getStatus", async () => {
+    const svc = new AttendanceService(new OkAdapter());
+    const view = await svc.describeStatus("u1");
+    expect(view.status).toBe("NOT_CHECKED_IN");
+    expect(view.remote).toBeNull();
+  });
+
+  it("reflects a live greytHR sign-in even though no local swipe ever happened", async () => {
+    // Adapter with a real-time status source: the user is already signed in.
+    const adapter: HrAdapter = {
+      async lookupEmployee() {
+        return null;
+      },
+      async syncDepartments() {
+        return [];
+      },
+      async checkIn(_id, atMs) {
+        return { ok: true, recordedAtMs: atMs, status: "CHECKED_IN" };
+      },
+      async checkOut(_id, atMs) {
+        return { ok: true, recordedAtMs: atMs, status: "CHECKED_OUT" };
+      },
+      async getStatus(): Promise<RemoteAttendanceSnapshot> {
+        return {
+          status: "CHECKED_IN",
+          firstInMs: T0,
+          lastOutMs: null,
+          workLocation: "Office",
+          workLocationId: 81,
+          allowLocationSelection: true,
+          locations: [{ id: 81, description: "Office" }],
+          shiftName: "9:00 AM -6:30 PM",
+        };
+      },
+    };
+    const svc = new AttendanceService(adapter);
+    // Local state machine alone would say NOT_CHECKED_IN.
+    expect(svc.getState("u1").status).toBe("NOT_CHECKED_IN");
+
+    const view = await svc.describeStatus("u1");
+    expect(view.status).toBe("CHECKED_IN");
+    expect(view.remote?.workLocation).toBe("Office");
+    // Live greytHR sign-in time flows into lastCheckInMs (greytHR's clock).
+    expect(view.lastCheckInMs).toBe(T0);
+    // Reconciled into local state for subsequent reads.
+    expect(svc.getState("u1").status).toBe("CHECKED_IN");
+  });
+
+  it("does NOT emit an attendance event when reconciling (read-only, not an action)", async () => {
+    const adapter: HrAdapter = {
+      async lookupEmployee() {
+        return null;
+      },
+      async syncDepartments() {
+        return [];
+      },
+      async checkIn(_id, atMs) {
+        return { ok: true, recordedAtMs: atMs, status: "CHECKED_IN" };
+      },
+      async checkOut(_id, atMs) {
+        return { ok: true, recordedAtMs: atMs, status: "CHECKED_OUT" };
+      },
+      async getStatus(): Promise<RemoteAttendanceSnapshot> {
+        return {
+          status: "CHECKED_IN",
+          firstInMs: T0,
+          lastOutMs: null,
+          workLocation: null,
+          workLocationId: null,
+          allowLocationSelection: false,
+          locations: [],
+          shiftName: null,
+        };
+      },
+    };
+    const svc = new AttendanceService(adapter);
+    const changes: AttendanceChange[] = [];
+    svc.on("attendance", (c) => changes.push(c));
+    await svc.describeStatus("u1");
+    expect(changes).toEqual([]); // human-agency: reflecting status is not a swipe
+  });
+
+  it("degrades to local state when getStatus returns null or throws", async () => {
+    const base = {
+      async lookupEmployee() {
+        return null;
+      },
+      async syncDepartments() {
+        return [] as DepartmentMapping[];
+      },
+      async checkIn(_id: string, atMs: number): Promise<AttendanceResult> {
+        return { ok: true, recordedAtMs: atMs, status: "CHECKED_IN" };
+      },
+      async checkOut(_id: string, atMs: number): Promise<AttendanceResult> {
+        return { ok: true, recordedAtMs: atMs, status: "CHECKED_OUT" };
+      },
+    };
+    const nullAdapter: HrAdapter = { ...base, async getStatus() { return null; } };
+    const throwAdapter: HrAdapter = {
+      ...base,
+      async getStatus(): Promise<RemoteAttendanceSnapshot | null> {
+        throw new Error("greytHR unreachable");
+      },
+    };
+
+    const svc1 = new AttendanceService(nullAdapter);
+    await svc1.checkIn("u1", T0); // local CHECKED_IN
+    const v1 = await svc1.describeStatus("u1");
+    expect(v1.status).toBe("CHECKED_IN");
+    expect(v1.remote).toBeNull();
+
+    const svc2 = new AttendanceService(throwAdapter);
+    const v2 = await svc2.describeStatus("u2");
+    expect(v2.status).toBe("NOT_CHECKED_IN");
+    expect(v2.remote).toBeNull();
   });
 });
 

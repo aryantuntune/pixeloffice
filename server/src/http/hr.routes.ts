@@ -26,7 +26,7 @@
 
 import { Router, type Request, type Response } from "express";
 import type { AttendanceService, AttendanceStatus } from "../integrations/hr/attendance.service";
-import type { HrAdapter } from "../integrations/hr/hr-adapter";
+import type { AttendanceMarkOptions, HrAdapter } from "../integrations/hr/hr-adapter";
 import type { JwtService } from "../auth/jwt.service";
 import { requireAuth, sessionOf } from "../auth/middleware";
 
@@ -97,7 +97,7 @@ export function createHrRouter(deps: HrRouterDeps): Router {
     const user = resolveActingUser(req, res, deps, authRequired);
     if (!user) return;
     const email = deps.resolveEmployeeByEmail ? user.email : undefined;
-    const result = await deps.attendance.checkIn(user.userId, now(), email);
+    const result = await deps.attendance.checkIn(user.userId, now(), email, readMarkOptions(req));
     res.status(result.ok ? 200 : 502).json({
       ok: result.ok,
       status: result.status,
@@ -111,7 +111,7 @@ export function createHrRouter(deps: HrRouterDeps): Router {
     const user = resolveActingUser(req, res, deps, authRequired);
     if (!user) return;
     const email = deps.resolveEmployeeByEmail ? user.email : undefined;
-    const result = await deps.attendance.checkOut(user.userId, now(), email);
+    const result = await deps.attendance.checkOut(user.userId, now(), email, readMarkOptions(req));
     res.status(result.ok ? 200 : 502).json({
       ok: result.ok,
       status: result.status,
@@ -120,24 +120,31 @@ export function createHrRouter(deps: HrRouterDeps): Router {
     });
   });
 
-  // GET /api/hr/status ----------------------------------------------------
-  // The client widget polls this; a 404 here means "HR integration absent" and
-  // the widget hides itself entirely (office still works).
-  router.get("/status", (req: Request, res: Response) => {
+  // GET /api/hr/status — live status, reconciled with greytHR (404 => widget hides).
+  router.get("/status", async (req: Request, res: Response) => {
     const user = resolveActingUser(req, res, deps, authRequired);
     if (!user) return;
-    const state = deps.attendance.getState(user.userId);
-    const status: AttendanceStatus = state.status;
+    const email = deps.resolveEmployeeByEmail ? user.email : undefined;
+    const view = await deps.attendance.describeStatus(user.userId, email);
+    const status: AttendanceStatus = view.status;
     res.json({
       userId: user.userId,
       status,
-      lastActionAtMs: state.lastActionAtMs,
+      lastActionAtMs: view.lastActionAtMs,
       // WHEN the user checked in / out, sourced from the attendance service's
       // adapter-recorded timestamps (greytHR's accepted swipe time on the real
       // path; mock clock on dev). Absent when unknown so the widget hides the
       // corresponding line. The widget renders e.g. "Checked in at 9:42 AM".
-      ...(state.lastCheckInMs != null ? { lastCheckInMs: state.lastCheckInMs } : {}),
-      ...(state.lastCheckOutMs != null ? { lastCheckOutMs: state.lastCheckOutMs } : {}),
+      ...(view.lastCheckInMs != null ? { lastCheckInMs: view.lastCheckInMs } : {}),
+      ...(view.lastCheckOutMs != null ? { lastCheckOutMs: view.lastCheckOutMs } : {}),
+      // greytHR work location, shift, and the check-in location-picker data.
+      ...(view.remote?.workLocation ? { workLocation: view.remote.workLocation } : {}),
+      ...(view.remote?.shiftName ? { shiftName: view.remote.shiftName } : {}),
+      ...(view.remote?.allowLocationSelection ? { allowLocationSelection: true } : {}),
+      ...(view.remote && view.remote.locations.length > 0
+        ? { locations: view.remote.locations }
+        : {}),
+      ...(view.remote?.workLocationId != null ? { workLocationId: view.remote.workLocationId } : {}),
       // Only present when the real GreytHR integration is configured; the widget
       // renders an "Open greytHR" deep link iff this is present.
       ...(deps.portalUrl ? { portalUrl: deps.portalUrl } : {}),
@@ -225,6 +232,20 @@ function resolveActingUser(
     return null;
   }
   return user;
+}
+
+/** Read the chosen work-location options (attLocation/location/remarks) from a body. */
+function readMarkOptions(req: Request): AttendanceMarkOptions {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const opts: AttendanceMarkOptions = {};
+  if (typeof body.attLocation === "number" && Number.isFinite(body.attLocation)) {
+    opts.attLocation = body.attLocation;
+  }
+  if (typeof body.location === "string" && body.location.trim() !== "") {
+    opts.location = body.location.trim();
+  }
+  if (typeof body.remarks === "string" && body.remarks !== "") opts.remarks = body.remarks;
+  return opts;
 }
 
 /** Read a sessionId from the JSON body (writes) or the query string (status). */

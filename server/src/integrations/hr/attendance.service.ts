@@ -24,7 +24,12 @@
 // ---------------------------------------------------------------------------
 
 import { EventEmitter } from "node:events";
-import type { AttendanceResult, HrAdapter } from "./hr-adapter";
+import type {
+  AttendanceMarkOptions,
+  AttendanceResult,
+  HrAdapter,
+  RemoteAttendanceSnapshot,
+} from "./hr-adapter";
 
 export type AttendanceStatus = "NOT_CHECKED_IN" | "CHECKED_IN" | "CHECKED_OUT";
 
@@ -53,6 +58,11 @@ export interface AttendanceState {
 export interface AttendanceChange {
   userId: string;
   status: AttendanceStatus;
+}
+
+/** Local attendance state reconciled with the live HR snapshot (when available). */
+export interface AttendanceView extends AttendanceState {
+  remote: RemoteAttendanceSnapshot | null;
 }
 
 /**
@@ -84,14 +94,51 @@ export class AttendanceService extends EventEmitter {
   }
 
   /**
+   * Read a user's attendance, reconciled with the live HR system when the
+   * adapter exposes one. Read-only: performs no swipe and emits no event.
+   * Degrades to local state on any failure.
+   */
+  async describeStatus(userId: string, email?: string): Promise<AttendanceView> {
+    const local = this.getState(userId);
+    if (!this.hr.getStatus) return { ...local, remote: null };
+
+    const employeeId = await this.resolveEmployeeId(userId, email, Date.now());
+    if (typeof employeeId !== "string") return { ...local, remote: null };
+
+    let remote: RemoteAttendanceSnapshot | null = null;
+    try {
+      remote = await this.hr.getStatus(employeeId);
+    } catch {
+      remote = null;
+    }
+    if (!remote) return { ...local, remote: null };
+
+    // greytHR is the source of truth: take its status and swipe times.
+    const reconciled: AttendanceState = {
+      ...local,
+      userId,
+      status: remote.status,
+      lastCheckInMs: remote.firstInMs ?? local.lastCheckInMs,
+      lastCheckOutMs: remote.lastOutMs ?? local.lastCheckOutMs,
+    };
+    this.states.set(userId, reconciled);
+    return { ...reconciled, remote };
+  }
+
+  /**
    * EXPLICIT user-initiated check-in. The ONLY caller is the /api/hr/check-in
    * route, invoked by a button click. Allowed from any state (re-check-in from
    * CHECKED_OUT; idempotent if already CHECKED_IN — still records the action).
    */
-  async checkIn(userId: string, atMs: number, email?: string): Promise<AttendanceResult> {
+  async checkIn(
+    userId: string,
+    atMs: number,
+    email?: string,
+    options?: AttendanceMarkOptions,
+  ): Promise<AttendanceResult> {
     const employeeId = await this.resolveEmployeeId(userId, email, atMs);
     if (typeof employeeId !== "string") return employeeId; // resolution failed
-    const result = await this.safe(() => this.hr.checkIn(employeeId, atMs), atMs, "CHECKED_IN");
+    const result = await this.safe(() => this.hr.checkIn(employeeId, atMs, options), atMs, "CHECKED_IN");
     if (result.ok) this.commit(userId, "CHECKED_IN", result.recordedAtMs);
     return result;
   }
@@ -100,12 +147,17 @@ export class AttendanceService extends EventEmitter {
    * EXPLICIT user-initiated check-out. The ONLY caller is the /api/hr/check-out
    * route, invoked by a button click.
    */
-  async checkOut(userId: string, atMs: number, email?: string): Promise<AttendanceResult> {
+  async checkOut(
+    userId: string,
+    atMs: number,
+    email?: string,
+    options?: AttendanceMarkOptions,
+  ): Promise<AttendanceResult> {
     // Guard: checking out when not checked in is a no-op state-wise, but we
     // still honor the explicit action by delegating; the adapter decides.
     const employeeId = await this.resolveEmployeeId(userId, email, atMs);
     if (typeof employeeId !== "string") return employeeId; // resolution failed
-    const result = await this.safe(() => this.hr.checkOut(employeeId, atMs), atMs, "CHECKED_OUT");
+    const result = await this.safe(() => this.hr.checkOut(employeeId, atMs, options), atMs, "CHECKED_OUT");
     if (result.ok) this.commit(userId, "CHECKED_OUT", result.recordedAtMs);
     return result;
   }

@@ -23,8 +23,8 @@ capture, or productivity scoring, ever.
 </p>
 
 **Docs:** [Player Guide](docs/GAMEPLAY.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[greytHR Sign-In](docs/greythr-login-integration.md) · [Lounge Games](docs/lounge-games.md) ·
-[Module Contract](CONTRACT.md) · [Product Constitution](plan.md)
+[greytHR Sign-In](docs/greythr-login-integration.md) · [Google Workspace Integration](docs/google-workspace-integration.md) ·
+[Lounge Games](docs/lounge-games.md) · [Module Contract](CONTRACT.md) · [Product Constitution](plan.md)
 
 ---
 
@@ -38,7 +38,7 @@ npm run dev          # server on :2567, client on :5173
 Then open **http://localhost:5173**. Pick a name, department, and avatar, and click
 **Enter Office**. (With **greytHR sign-in** enabled you instead enter your **Employee No +
 password** — your name and department come from greytHR; see
-[greytHR Sign-In](#greythr-sign-in-login--identity-optional).)
+[greytHR ESS Setup](#greythr-ess-setup-login--attendance-optional).)
 
 To see multiplayer presence, **open http://localhost:5173 in two or more browser
 windows** (or share your LAN IP with a teammate). Each window is a separate avatar;
@@ -57,7 +57,7 @@ move one with the arrow keys / WASD and watch it move in real time in the others
 - **Presence states & sources.** Every avatar carries one of six states —
   `AVAILABLE`, `IN_MEETING`, `FOCUS`, `BREAK`, `AWAY`, `OFFLINE` — each with a
   transparent *source* so the team knows where it came from: `CALENDAR` (an active
-  meeting), `MANUAL` (you picked it), `EVENT` (you joined a coffee break), `AUTO`
+  meeting/calendar event), `MANUAL` (you picked it), `EVENT` (you joined a coffee break), `AUTO`
   (idle timeout), or `SYSTEM` (default). Presence is resolved by a pure engine on
   the server and pushed to clients; the UI only displays it.
 - **Status selector.** The top-bar pill opens a dropdown: Available / Focus / Break /
@@ -75,21 +75,27 @@ move one with the arrow keys / WASD and watch it move in real time in the others
 - **Meetings + the Join button (human-agency rule).** When a scheduled meeting starts,
   invited users get a toast and a persistent **Join Meeting** button. Your avatar is
   **never** teleported automatically — only clicking Join seats you in the assigned
-  meeting room. Room size is chosen by invitee count (≤4 → Room A, ≤8 → Room B,
-  else Room C).
+  meeting room. When Google Calendar is connected, it also pulls the video Meet link,
+  letting you open Google Meet in a new tab via the **Join Meeting** button. Room size is
+  chosen by invitee count (≤4 → Room A, ≤8 → Room B, else Room C).
+- **Google Calendar integration.** Connect your Google Calendar directly from the HUD.
+  Real meetings automatically drive your status to `IN_MEETING` (source `CALENDAR`) and
+  surface a "Join" link. Supports an optional title-privacy mode.
 - **Admin console.** The ⚙ Admin button opens a modal (plain REST calls) with tabs to
   create events, schedule meetings, send broadcasts, and view the live roster of
   connected users with their presence and current area.
-- **greytHR sign-in (optional).** When enabled, greytHR is the office login: you enter
-  only your **Employee No + password** (the company subdomain is autofilled) and your real
-  **name + department** are pulled from greytHR. greytHR acts as an external IdP — the
-  server forwards the credential to the self-hosted greytHR ESS client and mints the
-  office JWT; PixelOffice never stores the password. See
+- **greytHR sign-in & attendance (optional).** When enabled, greytHR is the office login: you sign
+  in with your **Employee No + password** (subdomain is prefilled and hidden). Your real
+  **name + department** are pulled from greytHR via the self-hosted greytHR ESS client. The
+  HUD renders a self-view attendance widget showing your check-in state, shift details, and
+  worked hours, with Check-in / Check-out actions backed by real swipes. See
   [docs/greythr-login-integration.md](docs/greythr-login-integration.md).
 - **Profile editing.** Double-click **your own avatar** to open a profile modal and change
   your display name, **department** (a dropdown to fix a greytHR mismatch), and avatar
   color. Changes broadcast to everyone live, persist to your user record, and survive
   reconnects. (Never teleports your avatar — human-agency rule.)
+- **Ambient NPCs.** Up to 16 server-driven NPCs wander the office, sit at vacant desks,
+  take coffee breaks, and chat, keeping the virtual office lively even when empty.
 - **Lounge games.** Three two-player mini-games in the Lounge — **Ping-Pong**,
   **Tic-Tac-Toe**, **Connect Four**. Walk up to a station and press **E** to play.
   Server-authoritative; opt-in and explicit; never affects presence or HR. See
@@ -149,14 +155,6 @@ presence change → create event via REST → `EVENT_CREATED` received → join 
 teleport to a Coffee Area anchor + `BREAK`/`EVENT` presence → schedule meeting via REST
 → `MEETING_STARTED`. It prints PASS/FAIL per step and exits non-zero on any failure.
 
-To build the client for production:
-
-```bash
-npm run build -w client
-```
-
----
-
 ## Configuration
 
 **Every environment variable is optional.** With none set, `npm install && npm run dev`
@@ -170,26 +168,35 @@ working (plan Principle 4: integrations are optional). Copy `.env.example` to `.
 | `PORT` | `2567` | Server port (REST + Colyseus ws). |
 | `AWAY_TIMEOUT_MS` | `90000` | Idle ms before a session auto-flips to `AWAY` (source `AUTO`); any C2S message clears it. |
 | `LOG_LEVEL` | `info` | Server log verbosity: `debug` / `info` / `warn` / `error`. |
+| `NPC_COUNT` | `8` | Number of ambient office NPCs to spawn (0 to disable, max 16). |
+| `NPC_SEED` | `42` | PRNG seed for deterministic NPC movement. |
 | `JWT_SECRET` | ephemeral | App JWT signing secret. Unset → random per-process secret (tokens reset on restart) + boot warning. Set in production. |
 | `JWT_EXPIRES_IN` | `12h` | Token lifetime (jsonwebtoken format). |
-| `AUTH_REQUIRED` | `false` | When `true`, a valid JWT is required to join the room **and** an admin JWT is required for admin REST writes. |
+| `AUTH_REQUIRED` | `false` | When `true`, a valid JWT is required to join the room **and** an admin JWT is required for admin REST writes. (Forced to `true` when greytHR login is enabled). |
 | `ADMIN_EMAILS` | _(empty)_ | Comma-separated emails granted the `admin` role (RBAC). |
 | `CLIENT_APP_URL` | `http://localhost:5173` | Where the browser is redirected after an OAuth callback. |
 | `DEFAULT_DEPARTMENT` | `Engineering` | Department for OAuth users who don't pick one. |
+| `ALLOWED_EMAIL_DOMAINS` | _(empty)_ | Comma-separated email domains allowed to sign in via OAuth (e.g. `kalvium.com`). Empty = no restriction. |
 | `OAUTH_REDIRECT_BASE` | _(unset)_ | Public base URL of this server; OAuth redirect URIs derive from it. Required to enable OAuth. |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | _(unset)_ | Enable Google OAuth (both + redirect base required). |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | _(unset)_ | Enable Google OAuth and Google Calendar integration. |
+| `GOOGLE_CAL_TITLES` | `true` | When `false`, hides meeting titles (privacy/busy-free mode). |
+| `GOOGLE_CAL_POLL_MS` | `45000` | Poll interval for Google Calendar sync. |
+| `GOOGLE_AUTH_BASE` / `GOOGLE_TOKEN_BASE` / `GOOGLE_API_BASE` | _(defaults to Google APIs)_ | Custom endpoints to stub Google Calendar for offline tests. |
 | `MS_CLIENT_ID` / `MS_CLIENT_SECRET` | _(unset)_ | Enable Microsoft OAuth (both + redirect base required). |
 | `MS_TENANT` | `common` | Azure AD tenant id, or `common` / `organizations` / `consumers`. |
-| `GREYTHR_BASE_URL` | _(unset)_ | Company-domain base, e.g. `https://kalvium.greythr.com`. Required to enable the real adapter. |
-| `GREYTHR_API_USER` / `GREYTHR_API_KEY` | _(unset)_ | API user + key (preferred); the adapter acquires & auto-refreshes an OAuth2 token. |
-| `GREYTHR_API_TOKEN` | _(unset)_ | Legacy pre-acquired bearer token (used if no user/key); no auto-refresh. |
-| `GREYTHR_PORTAL_URL` | kalvium ESS home (when configured) | ESS deep link shown as "Open greytHR" in the widget; absent → link hidden. |
-| `GREYTHR_TIMEOUT_MS` | `5000` | Per-request GreytHR timeout. |
+| `GREYTHR_LOGIN_ENABLED` | `false` | When `true`, swaps the guest dev login card for greytHR sign-in. |
+| `GREYTHR_CLIENT_URL` | `http://localhost:3000` | Base URL of the self-hosted greytHR ESS API service. |
+| `GREYTHR_SUBDOMAIN` | _(empty)_ | Company subdomain prefilled in the greytHR login form. |
+| `GREYTHR_LOGIN_TIMEOUT_MS` | `8000` | Timeout for the greytHR login proxy request. |
+| `GREYTHR_PORTAL_URL` | kalvium ESS home (when configured) | ESS deep link shown as "Open greytHR ↗" in the widget; absent → link hidden. |
 | `DATABASE_URL` | _(unset)_ | Postgres user storage. Down → warn + in-memory fallback. |
 | `AUTO_MIGRATE` | `true` (when DB set) | Run `server/db/init.sql` on boot (idempotent). |
+| `DATABASE_SSL` | `require` | Postgres TLS mode: `require`, `no-verify`, or `disable`. |
 | `REDIS_URL` | _(unset)_ | Redis presence storage. Down → warn + in-memory fallback. |
 | `SERVE_CLIENT` | `false` | Serve `client/dist` from Express on the API port (single-container deploy; the Docker image sets `true`). |
 | `API_RATE_LIMIT` / `API_RATE_WINDOW_MS` | `60` / `60000` | Token-bucket rate limit on `/api` per client IP (`GET /api/health` never throttled). |
+| `TRUST_PROXY` | `false` | Set to `true` behind a reverse proxy to trust `X-Forwarded-For` client IPs. |
+| `CORS_ORIGINS` | `CLIENT_APP_URL` | Comma-separated allowed browser origins for cross-origin API access. |
 
 ### OAuth setup (Google / Microsoft)
 
@@ -206,6 +213,7 @@ forbids username/password auth; OAuth providers implement the same `AuthProvider
    `CLIENT_APP_URL` to where the client app is served.
 5. (Optional) Set `AUTH_REQUIRED=true` to require a token to enter the office and lock the
    admin REST API behind the admin role. Set `JWT_SECRET` so tokens survive restarts.
+6. (Optional) Set `ALLOWED_EMAIL_DOMAINS` to comma-separated domains (e.g., `company.com`) to restrict access.
 
 Flow: client → `GET /api/auth/:provider/login` (302 to the IdP) → IdP →
 `GET /api/auth/:provider/callback` (code → identity → upsert user → mint our JWT) → 302 to
@@ -213,82 +221,37 @@ Flow: client → `GET /api/auth/:provider/login` (302 to the IdP) → IdP →
 With **no** providers configured the login/callback routes 404 and the dev card is shown —
 the office runs exactly as the MVP.
 
-### greytHR Sign-In (login + identity, optional)
+### Google Calendar Setup (Presence + Meet, optional)
 
-Makes **greytHR the office login** (distinct from the attendance integration below, which
-uses greytHR's official admin API). greytHR is treated as an external identity provider:
-the user signs in with their greytHR **Employee No + password**, and PixelOffice pulls
-their real **name + department** from the self-hosted greytHR ESS client (the headless
-service that performs the real Ory-Hydra OAuth2/OIDC + RSA-OAEP login). OFF by default —
-the zero-config dev login card is shown unless enabled.
+When Google Calendar credentials are set, the office overlays a real `GoogleCalendarAdapter` to drive `IN_MEETING` presence and surface Google Meet video links.
 
-```bash
-GREYTHR_LOGIN_ENABLED=true              # enables "Sign in with greytHR"
-GREYTHR_CLIENT_URL=http://localhost:3000 # base URL of the greytHR ESS client service
-GREYTHR_SUBDOMAIN=kalvium               # autofilled in the form + forwarded
-# GREYTHR_LOGIN_TIMEOUT_MS=8000         # per-request timeout (login is slow)
-```
+1. In the GCP Console, register the client redirect URIs:
+   - For sign-in: `${OAUTH_REDIRECT_BASE}/api/auth/google/callback`
+   - For calendar: `${OAUTH_REDIRECT_BASE}/api/auth/google/calendar/callback`
+2. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`.
+3. Users will see a **"Connect Google Calendar"** widget on the HUD. Clicking it initiates an incremental offline OAuth grant to request the `calendar.events.readonly` scope.
+4. Refresh tokens are stored locally on the server (in memory for dev, or database in production). A background loop polls the primary calendar via incremental sync (`syncToken`).
+5. (Optional) Set `GOOGLE_CAL_TITLES=false` to hide meeting names and display a generic "Busy" status on the map for privacy. See [docs/google-workspace-integration.md](docs/google-workspace-integration.md).
 
-Flow: client `POST /api/auth/greythr/login` `{ loginId, password }` → server forwards the
-credential **once, server-to-server** to `{GREYTHR_CLIENT_URL}/api/auth/login` → maps the
-greytHR department onto an office department → upserts the user (`greythr:<employeeNo>`) →
-mints **our** JWT → returns `{ token, profile }`; the client joins the room with the token
-via the existing `JwtAuthProvider` path. **PixelOffice never stores the password** (only
-the minted JWT). After joining, double-click your avatar to fix a department mismatch.
+### greytHR ESS Setup (Login & Attendance, optional)
 
-- **Login is seamless:** only Employee No + password (subdomain autofilled); no display-name
-  field, no department picker, and no guest “Enter Office” button.
-- **Security note:** the greytHR ESS client reuses a cached session for `subdomain:loginId`
-  before re-validating the password, so a cached employee can be “logged in” with any
-  password. This is an auth-bypass risk for multi-user login — the fix belongs in the
-  greytHR repo. Details in [docs/greythr-login-integration.md](docs/greythr-login-integration.md).
+Makes **greytHR the sole office login** and drives the **Attendance check-in/out widget** using real HR data. Under this architecture, **PixelOffice never talks directly to greytHR cloud**. All traffic flows through the single self-hosted **greytHR ESS client proxy service** at `GREYTHR_CLIENT_URL`.
+
+1. Run the self-hosted greytHR ESS client proxy service (typically on port `3000`).
+2. Set the following environment variables in `.env`:
+   ```bash
+   GREYTHR_LOGIN_ENABLED=true
+   GREYTHR_CLIENT_URL=http://localhost:3000
+   GREYTHR_SUBDOMAIN=kalvium
+   GREYTHR_PORTAL_URL=https://kalvium.greythr.com/v3/portal/ess/home # hyperlink for "Open greytHR"
+   ```
+3. The guest dev login card will be replaced with a **"Sign in with greytHR"** card prompting for **Employee No / Login ID** and **Password** (the subdomain is prefilled and hidden).
+4. **Auth flow:** The browser sends credentials server-to-server once to the ESS proxy (`POST /api/auth/login`), which performs the Ory-Hydra OAuth2/OIDC login. PixelOffice never persists or logs the password. On success, PixelOffice maps the user's department, registers/upserts the employee, and issues a signed JWT.
+5. **Attendance widget:** The HUD renders a self-view attendance widget showing your check-in state, today's shift details, first-in time, and ongoing worked hours. Explicit clicks on **Check in** / **Check out** dispatch real swipe actions through the ESS proxy.
+6. **Privacy & Security:** Attendance details are strictly self-view only. The ESS client proxy caches sessions for `subdomain:loginId` (~45 days). Please refer to [docs/greythr-login-integration.md](docs/greythr-login-integration.md) for full architecture and safety details.
 
 > `.env` is loaded automatically at boot (no `dotenv` dependency — the server uses Node's
 > built-in env-file loader and never overrides real environment variables).
-
-### GreytHR (attendance, optional) — kalvium.greythr.com walkthrough
-
-The HUD shows an Attendance widget with explicit **Check in** / **Check out** buttons (it
-self-hides when HR is absent). Per the plan's GreytHR rules, **attendance is always an
-explicit user click** — there is no auto-check-in/out/logout and no activity tracking. With
-**no** GreytHR credentials the in-memory **mock adapter keeps working** and the office runs
-exactly as the MVP; a dead/misconfigured GreytHR config degrades gracefully (the office is
-unaffected).
-
-The adapter targets greytHR's official API platform
-([api-docs.greythr.com](https://api-docs.greythr.com/),
-[readthedocs](https://greythr-api-docs.readthedocs.io/en/latest/authentication.html)):
-it `POST`s `{base}/uas/v1/oauth2/client-token` to obtain an OAuth2 access token (cached and
-refreshed before expiry, with a one-shot refresh-and-retry on a `401`), then calls the
-employee-lookup and attendance-swipe endpoints with the `Access-Token` and `x-greythr-domain`
-headers.
-
-**1. An admin creates an API user + key in greytHR.** In the live instance
-(`https://kalvium.greythr.com`), a greytHR **admin** opens **Settings (gear icon) → My
-Account → API Details**, adds an API user, and generates its key/credentials (the key is
-shown only once — copy it immediately). This produces the **API user** (client id) and **API
-key** (client secret) used below, scoped to the `kalvium.greythr.com` domain.
-
-**2. Set the env lines** (in `.env`):
-
-```bash
-GREYTHR_BASE_URL=https://kalvium.greythr.com
-GREYTHR_API_USER=Apiuser           # the API user created above
-GREYTHR_API_KEY=your-api-key       # the API key (client secret) — shown once
-# Optional: ESS deep link for the widget (defaults to this when configured):
-GREYTHR_PORTAL_URL=https://kalvium.greythr.com/v3/portal/ess/home
-# Optional legacy alternative to USER+KEY (no auto-refresh):
-# GREYTHR_API_TOKEN=your-pre-acquired-bearer-token
-```
-
-The `x-greythr-domain` header defaults to the host of `GREYTHR_BASE_URL`
-(`kalvium.greythr.com`). When configured, the widget shows an **"Open greytHR ↗"** link to the
-ESS portal home; when not configured the link is hidden and the mock adapter is used.
-
-> Note: exact greytHR request-body and swipe-envelope field names can vary by tenant/version.
-> Those tenant-specific shapes are isolated as clearly tagged constants/builders in
-> `server/src/integrations/hr/greythr.adapter.ts` (marked `VERIFY-WITH-DOCS`) so adjusting
-> them never touches business logic.
 
 ### Postgres + Redis (optional persistence, via Docker Compose)
 
@@ -325,32 +288,19 @@ ready → `npm run smoke`. It uses only `actions/checkout` and `actions/setup-no
 
 ## MVP Scope & Production Path
 
-This is an honest MVP. The architecture was deliberately shaped so each stub swaps for a
-real implementation behind an existing interface — no rewrites:
+This repository implements the core virtual office features with pluggable integration adapters:
 
-- **Auth.** Dev login is an OAuth stand-in behind the `AuthProvider` interface
-  (`server/src/auth/`). The plan forbids custom username/password auth. Production drops
-  in **Google / Microsoft OAuth** implementations of the same interface; the login card
-  becomes the OAuth button.
-- **Persistence.** Users/sessions live in `InMemoryUserRepository` behind the
-  `UserRepository` interface. Production swaps in **PostgreSQL** (users, events) and
-  **Redis** (presence, sessions) implementations — the room and services don't change.
-- **Calendar.** A `MockCalendarAdapter` implements the `CalendarAdapter` interface
-  (`getCurrentMeeting`, `getUpcomingMeetings`). Production adds a **Google Calendar
-  adapter** (then Microsoft 365); the office keeps working if the integration fails
-  (integrations are optional by design).
-- **Backend framework.** Express + a hand-rolled DI container can be **ported to NestJS**
-  (the plan's target) by moving the same services into Nest modules/providers; the
-  Colyseus room and pure engine are framework-independent and carry over unchanged.
-- **Security.** Add **JWT** sessions and **role-based access control** in front of the
-  admin REST API (currently an unauthenticated dev console), and serve over **HTTPS**.
-- **Ops.** Add **Docker / Docker Compose** (server, client, Postgres, Redis) and a
-  **GitHub Actions** CI pipeline running `npm test`, the smoke test against a booted
-  server, and `npm run build -w client`.
-- **Integrations not yet built.** A **GreytHR adapter** (employee lookup, department
-  sync, *explicit* attendance actions only — never auto check-in/out) follows the same
-  adapter pattern.
+- **Auth.** Both dev guest logins, Google/Microsoft OAuth, and greytHR ESS authentication are fully supported behind the `AuthProvider` interface (`server/src/auth/`).
+- **Persistence.** In-memory persistence is used by default. Production deployments can enable **PostgreSQL** (for user and event records) and **Redis** (for session and presence storage) by setting the respective environment variables.
+- **Calendar.** Meeting detection is driven by a mock adapter by default, or by a live **Google Calendar** integration using offline OAuth grants when configured.
+- **HR & Attendance.** Driven by a mock adapter by default, or by a live **greytHR ESS** client proxy integration when configured.
+- **Ops & CI.** Fully configured with Docker, Docker Compose, and a GitHub Actions workflow running unit tests, client builds, and protocol smoke tests.
 
-The non-negotiables hold in this MVP and must continue to: presence not surveillance,
+### Production Path Remaining Tasks
+- **Microsoft 365 Calendar** integration (V2 planning).
+- **Backend framework.** The manual DI container and Express setup can be ported to **NestJS** by moving services into Nest modules; Colyseus rooms and the presence engine will carry over unchanged.
+- **HTTPS deployment.** Ensuring HTTPS/WSS is enforced for production environments.
+
+The non-negotiables hold in this office and must continue to: presence not surveillance,
 human agency (Join is always an explicit click), optional integrations, and business
 logic that never leaks into Phaser scenes or UI components.

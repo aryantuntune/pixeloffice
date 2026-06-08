@@ -33,6 +33,40 @@ export interface AttendanceResult {
   reason?: string;
 }
 
+/** A selectable attendance work location (e.g. Office, Work from Home). */
+export interface AttendanceLocation {
+  /** greytHR work-location id (sent back as `attLocation` on sign-in). */
+  id: number;
+  /** Human description shown in the picker (e.g. "Office"). */
+  description: string;
+}
+
+/** Caller-chosen options for an explicit sign-in / sign-out. */
+export interface AttendanceMarkOptions {
+  /** Explicit greytHR work-location id (takes precedence over `location`). */
+  attLocation?: number;
+  /** Work location by description, e.g. "Office" (resolved by the HR system). */
+  location?: string;
+  /** Optional free-text remarks. */
+  remarks?: string;
+}
+
+/** The employee's current attendance as the live HR portal reports it. */
+export interface RemoteAttendanceSnapshot {
+  status: "NOT_CHECKED_IN" | "CHECKED_IN" | "CHECKED_OUT";
+  /** Epoch ms of today's first sign-in, or null when not signed in. */
+  firstInMs: number | null;
+  /** Epoch ms of today's last sign-out, or null when not signed out. */
+  lastOutMs: number | null;
+  /** Work-location description currently in effect (e.g. "Office"). */
+  workLocation: string | null;
+  workLocationId: number | null;
+  /** Whether the portal lets the employee choose a work location on sign-in. */
+  allowLocationSelection: boolean;
+  locations: AttendanceLocation[];
+  shiftName: string | null;
+}
+
 /**
  * Maps a GreytHR/free-form department label onto one of the office's known
  * DEPARTMENTS, or null when there is no confident match. Used by department
@@ -60,14 +94,22 @@ export interface HrAdapter {
   /**
    * Record an EXPLICIT check-in for an employee at `atMs`.
    * MUST only be called as a direct result of a user clicking "Check in".
+   * `options` carries the user-chosen work location (and optional remarks).
    */
-  checkIn(employeeId: string, atMs: number): Promise<AttendanceResult>;
+  checkIn(employeeId: string, atMs: number, options?: AttendanceMarkOptions): Promise<AttendanceResult>;
 
   /**
    * Record an EXPLICIT check-out for an employee at `atMs`.
    * MUST only be called as a direct result of a user clicking "Check out".
    */
-  checkOut(employeeId: string, atMs: number): Promise<AttendanceResult>;
+  checkOut(employeeId: string, atMs: number, options?: AttendanceMarkOptions): Promise<AttendanceResult>;
+
+  /**
+   * Read the employee's current attendance from the live HR system, or null when
+   * it cannot be determined. Read-only (no swipe). Optional: adapters without a
+   * real-time status source (e.g. the mock) may omit it.
+   */
+  getStatus?(employeeId: string): Promise<RemoteAttendanceSnapshot | null>;
 }
 
 /** Thrown internally by the real adapter; never escapes the attendance service. */

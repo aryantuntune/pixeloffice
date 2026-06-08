@@ -329,10 +329,15 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
   };
 
   // Attendance widget self-hides if the HR integration is absent (status 404).
-  attendance = mountAttendance(hudRoot, {
-    fetchBase: serverHttpBase(),
-    getSessionId: liveSessionId,
-  });
+  // Mount once; reusing the instance across reconnects avoids stacking widgets.
+  if (!attendance) {
+    attendance = mountAttendance(hudRoot, {
+      fetchBase: serverHttpBase(),
+      getSessionId: liveSessionId,
+    });
+  } else {
+    void attendance.refresh();
+  }
 
   // "Connect Google Calendar" widget self-hides if Google is not configured
   // (status 404) — integrations are optional; the office is unaffected.

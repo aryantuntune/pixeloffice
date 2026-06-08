@@ -1245,6 +1245,10 @@ body {
   gap: 8px;
   padding-bottom: 10px;
 }
+.attendance-widget[hidden],
+.attendance-widget [hidden] {
+  display: none;
+}
 
 .attendance-header {
   display: flex;
@@ -1361,6 +1365,108 @@ body {
 }
 .attendance-time-out {
   color: #e8a13c;
+}
+
+/* Work-location modal (opened on check-in). */
+.attendance-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(8, 12, 18, 0.62);
+  backdrop-filter: blur(3px);
+}
+.attendance-modal-overlay[hidden] {
+  display: none;
+}
+.attendance-modal {
+  width: 100%;
+  max-width: 340px;
+  padding: 20px;
+  background: var(--panel, #1a1f27);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  animation: attendance-modal-in 140ms ease-out;
+}
+@keyframes attendance-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.attendance-modal-title {
+  margin-bottom: 14px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text, #e8edf2);
+}
+.attendance-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.attendance-loc-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text, #e8edf2);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.attendance-loc-option:hover {
+  background: rgba(62, 207, 110, 0.14);
+  border-color: rgba(62, 207, 110, 0.55);
+}
+.attendance-loc-option:active {
+  transform: scale(0.99);
+}
+.attendance-loc-option:focus-visible {
+  outline: 2px solid #3ecf6e;
+  outline-offset: 1px;
+}
+.attendance-loc-option.is-preferred {
+  border-color: rgba(62, 207, 110, 0.5);
+}
+.attendance-loc-option.is-preferred::after {
+  content: "Current";
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #3ecf6e;
+}
+.attendance-modal-cancel {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted, #9aa3ad);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.attendance-modal-cancel:hover {
+  color: var(--text, #e8edf2);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 
 /* Elapsed/worked duration line. */
