@@ -209,13 +209,63 @@ export function buildDefaultBuilding(): Building {
 }
 
 /**
- * Pick a walkable tile adjacent to (x,y) on `floor` (the lift-lobby landing).
- * Prefers the tile directly below, then the four neighbours, then a small ring
- * scan — guaranteeing the result is walkable and NOT (x,y) itself so a rider
- * never lands on the portal tile and re-triggers a crossing.
+ * Pick a walkable lift-lobby landing tile near (x,y) on `floor`.
+ *
+ * The rider arrives NEXT TO the return portal but must not be able to re-ride a
+ * portal with a single casual step. The previous version landed the rider on the
+ * tile directly below the return portal — but on floors where two elevators sit
+ * one row apart (Floor 1: down @ (23,27), up @ (25,27)), that drop tile is one
+ * step from BOTH elevators, so the first forward step yo-yos you back. We now:
+ *   1. require the landing to be at Manhattan distance >= 2 from EVERY portal on
+ *      the floor (no portal is one step away — a single step can never re-ride);
+ *   2. prefer a SIDE offset (same row, not directly below/above the portal column)
+ *      so "press forward after arriving" walks into the lobby, not the elevator;
+ *   3. fall back to the old adjacent tiles, then a ring scan, if the floor is too
+ *      cramped to honour the 2-tile clearance.
+ * The result is always walkable and never a portal tile itself.
  */
 function landingBeside(floor: Floor, x: number, y: number): TilePos {
-  const candidates: TilePos[] = [
+  const walkableNonPortal = (cx: number, cy: number): boolean =>
+    cx >= 0 &&
+    cy >= 0 &&
+    cx < floor.width &&
+    cy < floor.height &&
+    floor.solid[cy][cx] !== true &&
+    portalAt(floor, cx, cy) === null;
+
+  // Manhattan distance to the NEAREST portal on this floor (Infinity if none).
+  const nearestPortalDist = (cx: number, cy: number): number => {
+    let best = Infinity;
+    for (const p of floor.portals) {
+      const d = Math.abs(p.x - cx) + Math.abs(p.y - cy);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+
+  // Preferred clearance landings: a few tiles to the side first (so a forward
+  // step heads into the lobby), then below/above — all required to sit >= 2
+  // tiles from every portal so a single step can never re-trigger a crossing.
+  const clearanceCandidates: TilePos[] = [
+    { x: x - 2, y },
+    { x: x + 2, y },
+    { x, y: y + 2 },
+    { x, y: y - 2 },
+    { x: x - 2, y: y + 1 },
+    { x: x + 2, y: y + 1 },
+    { x: x - 2, y: y - 1 },
+    { x: x + 2, y: y - 1 },
+    { x: x - 1, y: y + 2 },
+    { x: x + 1, y: y + 2 },
+  ];
+  for (const c of clearanceCandidates) {
+    if (walkableNonPortal(c.x, c.y) && nearestPortalDist(c.x, c.y) >= 2) {
+      return c;
+    }
+  }
+
+  // Cramped-floor fallback: the original adjacent tiles (still never a portal).
+  const adjacentCandidates: TilePos[] = [
     { x, y: y + 1 },
     { x, y: y - 1 },
     { x: x - 1, y },
@@ -225,24 +275,14 @@ function landingBeside(floor: Floor, x: number, y: number): TilePos {
     { x: x - 1, y: y - 1 },
     { x: x + 1, y: y - 1 },
   ];
-  for (const c of candidates) {
-    if (
-      c.x >= 0 &&
-      c.y >= 0 &&
-      c.x < floor.width &&
-      c.y < floor.height &&
-      floor.solid[c.y][c.x] !== true &&
-      portalAt(floor, c.x, c.y) === null
-    ) {
-      return c;
-    }
+  for (const c of adjacentCandidates) {
+    if (walkableNonPortal(c.x, c.y)) return c;
   }
-  // Fallback: a guaranteed-walkable non-portal tile anywhere on the floor.
+
+  // Last resort: a guaranteed-walkable non-portal tile anywhere on the floor.
   for (let sy = 1; sy < floor.height - 1; sy++) {
     for (let sx = 1; sx < floor.width - 1; sx++) {
-      if (floor.solid[sy][sx] !== true && portalAt(floor, sx, sy) === null) {
-        return { x: sx, y: sy };
-      }
+      if (walkableNonPortal(sx, sy)) return { x: sx, y: sy };
     }
   }
   return { x: floor.spawn.x, y: floor.spawn.y };

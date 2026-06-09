@@ -160,21 +160,34 @@ describe("buildDefaultBuilding seed", () => {
     expect(f2.portals.every((p) => p.toFloorId !== "floor-3")).toBe(true);
   });
 
-  it("every portal lands beside the matching return portal (single lift lobby)", () => {
+  it("every portal lands in the lift lobby with a no-bounce clearance from every portal", () => {
     // Lift-lobby invariant (regression guard, finding #3): a rider arriving from
-    // floor A onto floor B must land ADJACENT (Manhattan <= 1) to the elevator
-    // that takes them back to A — never cross-map, never on a portal tile itself.
+    // floor A onto floor B lands NEAR the elevator that takes them back to A, but
+    // NEVER one step from re-riding ANY elevator. Previously the rider dropped on
+    // the tile directly below the return portal — which, where two elevators sit
+    // one row apart (Floor 1: down @ (23,27), up @ (25,27)), is one step from BOTH,
+    // so the first forward step yo-yos them back. The fix lands them >= 2 tiles
+    // (Manhattan) from EVERY portal so a single casual step can never re-trigger a
+    // crossing, while staying in the same lift lobby (a few tiles of the return
+    // portal). Never cross-map, never on a portal tile itself.
     for (const floor of building.floors) {
       for (const p of floor.portals) {
         const target = floorById(building, p.toFloorId)!;
         // The landing tile is walkable and NOT itself a portal (no re-trigger).
         expectWalkable(target, p.toX, p.toY);
         expect(portalAt(target, p.toX, p.toY)).toBeNull();
-        // The return portal back to `floor` must exist and be adjacent.
+        // The return portal back to `floor` must exist.
         const back = target.portals.find((q) => q.toFloorId === floor.id);
         expect(back).toBeTruthy();
-        const dist = Math.abs(back!.x - p.toX) + Math.abs(back!.y - p.toY);
-        expect(dist).toBeLessThanOrEqual(1);
+        // No-bounce: every portal on the target floor is >= 2 tiles away, so a
+        // single step cannot re-ride any elevator.
+        for (const q of target.portals) {
+          const d = Math.abs(q.x - p.toX) + Math.abs(q.y - p.toY);
+          expect(d).toBeGreaterThanOrEqual(2);
+        }
+        // Same lift lobby: the landing stays close to the return portal.
+        const distBack = Math.abs(back!.x - p.toX) + Math.abs(back!.y - p.toY);
+        expect(distBack).toBeLessThanOrEqual(4);
       }
     }
   });

@@ -125,6 +125,14 @@ export interface HudCallbacks {
   onJoinGame?(gameId: string, mode: "ai" | "group"): void;
   onLocate?(sessionId: string): void;
   onOpenProfile?(sessionId: string): void;
+  /**
+   * Open the editor for the LOCAL user's own profile (name / department /
+   * avatar). Surfaced as an explicit, discoverable affordance in the status
+   * menu so editing your identity does not depend on the (easy-to-miss)
+   * double-click-your-own-avatar gesture. Same handler the scene's double-click
+   * calls. No-op / item hidden if the integrator does not wire it.
+   */
+  onEditSelfProfile?(): void;
   isNpcHidden?(): boolean;
   /**
    * Optional: pan the CAMERA toward the nearest elevator/portal on the current
@@ -248,6 +256,23 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
     statusMenu.appendChild(item);
   }
   statusMenu.appendChild(statusNote);
+  // "Edit profile" entry — a discoverable path to the profile editor (the
+  // double-click-your-own-avatar gesture is easy to miss). Only added when the
+  // integrator wires the handler. Visually separated from the status options.
+  if (cb.onEditSelfProfile) {
+    const divider = document.createElement("div");
+    divider.className = "hud-status-divider";
+    statusMenu.appendChild(divider);
+    const editItem = document.createElement("button");
+    editItem.type = "button";
+    editItem.className = "hud-status-item hud-status-edit";
+    editItem.append(document.createTextNode("✎ Edit profile"));
+    editItem.addEventListener("click", () => {
+      statusMenu.hidden = true;
+      cb.onEditSelfProfile?.();
+    });
+    statusMenu.appendChild(editItem);
+  }
   statusPill.addEventListener("click", () => {
     statusMenu.hidden = !statusMenu.hidden;
   });

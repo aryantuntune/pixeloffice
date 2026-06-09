@@ -26,9 +26,13 @@ interface SessionRecord {
   userId: string;
   manualStatus: ManualStatus;
   lastActivityAt: number;
+  /** Epoch ms the session began being tracked (joined the office). */
+  trackedAt: number;
   lastState: PresenceState;
   lastSource: PresenceSource;
   currentMeetingId: string | null;
+  /** Meeting ids the user EXPLICITLY clicked Join on (human agency). */
+  joinedMeetingIds: Set<string>;
 }
 
 const DEFAULT_AWAY_TIMEOUT_MS = 90_000;
@@ -65,10 +69,38 @@ export class PresenceService extends EventEmitter {
       userId,
       manualStatus: null,
       lastActivityAt: nowMs,
+      trackedAt: nowMs,
       lastState: PresenceState.OFFLINE,
       lastSource: "SYSTEM",
       currentMeetingId: null,
+      joinedMeetingIds: new Set<string>(),
     });
+  }
+
+  /**
+   * Record that a user EXPLICITLY clicked Join on a meeting (human agency). An
+   * "everyone" (empty-participants) meeting that began BEFORE the user joined the
+   * office does not auto-apply to them until they take this action — see
+   * `meetingApplies`.
+   */
+  markMeetingJoined(sessionId: string, meetingId: string): void {
+    this.records.get(sessionId)?.joinedMeetingIds.add(meetingId);
+  }
+
+  /**
+   * Whether an active meeting should drive this session's presence to IN_MEETING.
+   *
+   * A meeting the user is EXPLICITLY invited to (non-empty participantIds that
+   * includes them — the adapter already filtered) always applies. An "everyone"
+   * all-hands meeting (empty participantIds) only auto-applies if it began at or
+   * after the user joined the office, OR the user explicitly clicked Join — so a
+   * brand-new user is never silently marked "In Meeting" for a meeting already in
+   * progress that they have taken no action on (human agency).
+   */
+  private meetingApplies(rec: SessionRecord, meeting: MeetingInfo): boolean {
+    if (meeting.participantIds.length > 0) return true; // explicit invite
+    if (rec.joinedMeetingIds.has(meeting.id)) return true; // explicit Join click
+    return meeting.startTime >= rec.trackedAt; // started while/after they were here
   }
 
   untrack(sessionId: string): void {
@@ -109,6 +141,13 @@ export class PresenceService extends EventEmitter {
         meeting = this.calendar.getCurrentMeeting(rec.userId, nowMs);
       } catch {
         meeting = null; // degrade gracefully
+      }
+
+      // An "everyone" meeting already in progress when a user joins does not
+      // silently flip their presence to IN_MEETING (human agency) — ignore it
+      // until they explicitly Join. A specific invite always applies.
+      if (meeting && !this.meetingApplies(rec, meeting)) {
+        meeting = null;
       }
 
       let inBreakEvent = false;

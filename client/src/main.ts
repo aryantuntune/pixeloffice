@@ -348,43 +348,50 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
     onWhiteboardInteract: (department) => {
       whiteboard?.open(department as Department);
     },
-    // Double-clicking the local avatar opens the profile modal.
-    onProfileOpen: () => {
-      const self = localStore.self();
-      if (!self) return;
-      openProfileModal({
-        parent: hudRoot,
-        current: { name: self.name, department: self.department, avatarId: self.avatarId },
-        onSave: (draft) => {
-          conn.send(C2S.UPDATE_PROFILE, draft);
-          // Keep reconnects + the next session in sync with the edit.
-          conn.updateJoinProfile(draft);
-          persistLoginProfile(draft);
-          // Optimistic local apply; the server also broadcasts PLAYER_UPDATED.
-          localGame.updatePlayer(selfId, draft);
-          localStore.upsertPlayer({ ...self, ...draft });
-        },
-        onLogout: () => {
-          void (async () => {
-            // End the real greytHR session server-side (best-effort), then drop
-            // the local token and return to the sign-in screen.
-            const token = readStoredToken();
-            try {
-              await fetch(`${serverHttpBase()}/api/auth/greythr/logout`, {
-                method: "POST",
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-              });
-            } catch {
-              /* best-effort: still sign out locally */
-            }
-            clearStoredToken();
-            conn.close(); // "offline" -> teardown + login screen
-          })();
-        },
-      });
-    },
+    // Double-clicking the local avatar opens the profile modal. The same editor
+    // is reachable from the HUD status menu's "Edit profile" item (wired below)
+    // so it is not solely behind the easy-to-miss double-click gesture.
+    onProfileOpen: () => openSelfProfileEditor(),
   });
   game = localGame;
+
+  // Open the LOCAL user's profile editor. Shared by the scene's double-click
+  // gesture and the HUD status menu's "Edit profile" item so editing your
+  // identity is discoverable, not solely behind the easy-to-miss double-click.
+  function openSelfProfileEditor(): void {
+    const self = localStore.self();
+    if (!self) return;
+    openProfileModal({
+      parent: hudRoot,
+      current: { name: self.name, department: self.department, avatarId: self.avatarId },
+      onSave: (draft) => {
+        conn.send(C2S.UPDATE_PROFILE, draft);
+        // Keep reconnects + the next session in sync with the edit.
+        conn.updateJoinProfile(draft);
+        persistLoginProfile(draft);
+        // Optimistic local apply; the server also broadcasts PLAYER_UPDATED.
+        localGame.updatePlayer(selfId, draft);
+        localStore.upsertPlayer({ ...self, ...draft });
+      },
+      onLogout: () => {
+        void (async () => {
+          // End the real greytHR session server-side (best-effort), then drop
+          // the local token and return to the sign-in screen.
+          const token = readStoredToken();
+          try {
+            await fetch(`${serverHttpBase()}/api/auth/greythr/logout`, {
+              method: "POST",
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+          } catch {
+            /* best-effort: still sign out locally */
+          }
+          clearStoredToken();
+          conn.close(); // "offline" -> teardown + login screen
+        })();
+      },
+    });
+  }
 
   // Render existing remote players into the scene.
   for (const p of welcome.players) localGame.addPlayer(p);
@@ -426,6 +433,7 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
     onJoinGame: (gameId, mode) => conn.send(C2S.JOIN_GAME, { gameId, mode }),
     onLocate: (sessionId) => locate(sessionId),
     onOpenProfile: (sessionId) => openProfile(sessionId),
+    onEditSelfProfile: () => openSelfProfileEditor(),
     isNpcHidden: () => readHideNpcs(),
     // Camera-only "Find the elevator": pan to the nearest portal on the current
     // floor. Never moves the avatar (human agency — the player walks in to ride).

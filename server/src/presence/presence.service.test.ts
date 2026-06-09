@@ -101,6 +101,50 @@ describe("PresenceService — meeting start/end detection", () => {
   });
 });
 
+describe("PresenceService — 'everyone' meeting does not auto-catch a newcomer (human agency)", () => {
+  function everyoneMeeting(id: string, startTime: number): MeetingInfo {
+    return { id, title: id, startTime, endTime: startTime + 60_000, participantIds: [], roomName: "Meeting Room C" };
+  }
+
+  it("an all-hands meeting already in progress when the user joins does NOT flip them to IN_MEETING", () => {
+    const { cal, svc, started } = setup();
+    // Meeting started BEFORE this session joined the office.
+    cal.current = everyoneMeeting("m1", NOW - 10_000);
+    svc.track("s1", "u1", NOW);
+    svc.tick(NOW);
+    expect(svc.getPresence("s1")).toEqual({ state: PresenceState.AVAILABLE, source: "SYSTEM" });
+    expect(started).toEqual([]); // no silent meeting-started either
+  });
+
+  it("flips to IN_MEETING after the user EXPLICITLY joins that meeting", () => {
+    const { cal, svc } = setup();
+    cal.current = everyoneMeeting("m1", NOW - 10_000);
+    svc.track("s1", "u1", NOW);
+    svc.tick(NOW);
+    expect(svc.getPresence("s1")?.state).toBe(PresenceState.AVAILABLE);
+    svc.markMeetingJoined("s1", "m1"); // explicit Join click
+    svc.tick(NOW);
+    expect(svc.getPresence("s1")).toEqual({ state: PresenceState.IN_MEETING, source: "CALENDAR" });
+  });
+
+  it("an all-hands meeting that STARTS while the user is present still applies (no explicit join needed)", () => {
+    const { cal, svc } = setup();
+    svc.track("s1", "u1", NOW);
+    svc.tick(NOW);
+    cal.current = everyoneMeeting("m2", NOW + 5_000); // begins after join
+    svc.tick(NOW + 5_000);
+    expect(svc.getPresence("s1")).toEqual({ state: PresenceState.IN_MEETING, source: "CALENDAR" });
+  });
+
+  it("a SPECIFIC invite (the user is named) always applies regardless of join time", () => {
+    const { cal, svc } = setup();
+    cal.current = { id: "m3", title: "m3", startTime: NOW - 10_000, endTime: NOW + 60_000, participantIds: ["u1"], roomName: "Meeting Room A" };
+    svc.track("s1", "u1", NOW);
+    svc.tick(NOW);
+    expect(svc.getPresence("s1")).toEqual({ state: PresenceState.IN_MEETING, source: "CALENDAR" });
+  });
+});
+
 describe("PresenceService — graceful degradation", () => {
   it("a throwing calendar does NOT throw out of tick and degrades to no-meeting", () => {
     const { cal, svc } = setup();

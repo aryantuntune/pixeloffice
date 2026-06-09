@@ -353,6 +353,20 @@ body {
   display: none;
 }
 
+/* Separator + "Edit profile" entry appended below the status options. */
+.hud-status-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}
+.hud-status-edit {
+  color: var(--muted);
+  font-weight: 600;
+}
+.hud-status-edit:hover {
+  color: var(--text);
+}
+
 .hud-meeting-btn {
   background: linear-gradient(180deg, #ef6258, #e5544b);
   color: #fff;
@@ -1443,6 +1457,12 @@ body {
   flex-direction: column;
   gap: 6px;
 }
+/* `.admin-participants`'s display:flex would override the `hidden` attribute,
+   leaving the invitee picker (and its no-op Refresh button) visible even when
+   "Invite all" is checked. Mirror the `.login-form[hidden]` rule so hidden wins. */
+.admin-participants[hidden] {
+  display: none;
+}
 
 .admin-participants-list {
   display: flex;
@@ -1473,6 +1493,30 @@ body {
   transform: translateY(-1px);
 }
 .admin-submit:active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* Secondary action (e.g. the picker / users "Refresh"): a quieter outline
+   button so it doesn't read as a second primary alongside the blue submit. */
+.admin-refresh {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 9px 14px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: transform 0.12s var(--ease), filter 0.15s ease, background 0.12s ease;
+}
+.admin-refresh:hover {
+  background: var(--panel-3);
+  transform: translateY(-1px);
+}
+.admin-refresh:active {
   transform: translateY(0) scale(0.98);
 }
 
@@ -2002,6 +2046,12 @@ body {
 }
 .hud-meet-link:active {
   transform: translateY(0) scale(0.97);
+}
+/* `.hud-meet-link`'s display:inline-flex would override the `hidden` attribute,
+   showing a dead "Open Meet" anchor (no href) when the meeting carries no Meet
+   link. Mirror the `.login-form[hidden]` rule so hidden wins. */
+.hud-meet-link[hidden] {
+  display: none;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2708,6 +2758,31 @@ body {
      stays tappable as a close affordance instead of hiding behind the panel. */
   .hud-sidebar:not(.collapsed) ~ .hud-sidebar-toggle {
     right: calc(min(280px, 86vw) + 8px);
+  }
+
+  /* Compact the top bar so it doesn't wrap into a tall stack that eats the
+     canvas. The status pill's `margin-left:auto` (which pushes it to the far
+     right on wide screens) would otherwise force it onto its own lonely wrapped
+     row; reset it so controls pack left-to-right. Shrink the logo + button
+     padding and let the bar wrap to at most a compact two rows. */
+  .hud-topbar {
+    gap: 6px;
+    right: 52px;
+  }
+  .hud-status {
+    margin-left: 0;
+  }
+  .hud-logo {
+    font-size: 14px;
+    letter-spacing: 0.8px;
+    padding: 6px 10px;
+  }
+  .hud-meeting-btn,
+  .hud-meet-link,
+  .hud-status-pill,
+  .hud-floor-btn {
+    padding: 6px 11px;
+    font-size: 12px;
   }
 }
 

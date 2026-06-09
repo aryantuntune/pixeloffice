@@ -1117,6 +1117,10 @@ export class OfficeRoom extends Room {
     }
     if (!meeting || meeting.id !== meetingId) return;
 
+    // Record the explicit Join (human agency) so an "everyone" meeting that was
+    // already in progress when this user joined now drives their presence too.
+    container.presence.markMeetingJoined(client.sessionId, meeting.id);
+
     // Allocate the lowest free seat slot for this meeting (idempotent on
     // re-join; freed slots are reused without colliding with an occupant). The
     // meeting room is seated on the player's CURRENT floor (meetings are
@@ -1860,6 +1864,10 @@ export class OfficeRoom extends Room {
 
       if (this.checkTicTacToeWin(state.board, symbol)) {
         game.winnerSessionId = client.sessionId;
+        // Credit the winner so the scoreboard / "Final Score" reflect the round
+        // (mirrors ping-pong, which already increments score1/score2).
+        if (client.sessionId === game.player1!.sessionId) game.score1++;
+        else game.score2++;
         game.status = "gameover";
       } else if (state.board.every((c) => c !== "")) {
         game.winnerSessionId = null; // draw
@@ -1890,6 +1898,10 @@ export class OfficeRoom extends Room {
 
       if (this.checkConnectFourWin(state.board, token)) {
         game.winnerSessionId = client.sessionId;
+        // Credit the winner so the scoreboard / "Final Score" reflect the round
+        // (mirrors ping-pong, which already increments score1/score2).
+        if (client.sessionId === game.player1!.sessionId) game.score1++;
+        else game.score2++;
         game.status = "gameover";
       } else if (state.board.every((row) => row.every((c) => c !== ""))) {
         game.winnerSessionId = null; // draw

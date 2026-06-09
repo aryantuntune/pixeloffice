@@ -67,7 +67,9 @@ export function createAdmin(parent: HTMLElement): void {
   const trigger = document.createElement("button");
   trigger.type = "button";
   trigger.className = "admin-trigger";
-  trigger.textContent = "⚙ Admin";
+  // Distinct glyph from the personal-settings gear (⚙) so a newcomer doesn't read
+  // the two as the same control; admin tooling is a separate, labeled affordance.
+  trigger.textContent = "🛠 Admin";
   parent.appendChild(trigger);
 
   // Backdrop + modal.
@@ -290,7 +292,7 @@ export function createAdmin(parent: HTMLElement): void {
     pickerTitle.textContent = "Invite who's online:";
     const pickerRefresh = document.createElement("button");
     pickerRefresh.type = "button";
-    pickerRefresh.className = "admin-submit";
+    pickerRefresh.className = "admin-refresh";
     pickerRefresh.textContent = "Refresh";
     pickerBar.append(pickerTitle, pickerRefresh);
 
@@ -431,7 +433,7 @@ export function createAdmin(parent: HTMLElement): void {
     bar.className = "admin-users-bar";
     const refresh = document.createElement("button");
     refresh.type = "button";
-    refresh.className = "admin-submit";
+    refresh.className = "admin-refresh";
     refresh.textContent = "Refresh";
     bar.appendChild(refresh);
 
