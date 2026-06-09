@@ -135,6 +135,17 @@ export class GreytHrEssAttendanceAdapter implements HrAdapter {
     return [];
   }
 
+  /**
+   * True when a greytHR session is held for this user. The session store is the
+   * single source of truth: login writes it; a 401 on any swipe/status read
+   * deletes it (the greytHR ESS API has no refresh endpoint). So "absent" means
+   * the session expired, was logged out, or was wiped by a server restart — in
+   * every case the user must reconnect with their password.
+   */
+  isConnected(userId: string): boolean {
+    return this.sessions.get(userId) != null;
+  }
+
   /** Record an explicit check-in for the user (with the chosen work location). */
   async checkIn(userId: string, atMs: number, options?: AttendanceMarkOptions): Promise<AttendanceResult> {
     return this.swipe(userId, atMs, "sign-in", "CHECKED_IN", options);

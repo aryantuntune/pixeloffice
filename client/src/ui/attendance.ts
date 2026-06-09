@@ -39,6 +39,8 @@ interface StatusResponse {
   locations?: AttendanceLocation[];
   workLocationId?: number;
   portalUrl?: string;
+  /** False when the greytHR session expired/was wiped and a reconnect is needed. */
+  greythrConnected?: boolean;
 }
 
 interface ActionResponse {
@@ -172,7 +174,25 @@ export function mountAttendance(
   feedback.className = "attendance-feedback";
   feedback.setAttribute("aria-live", "polite");
 
-  root.append(header, statusRow, times, elapsed, actions, feedback);
+  // Proactive reconnect banner: shown when the status poll detects that the
+  // greytHR session has expired, so the user reconnects in one click BEFORE
+  // ever clicking a dead check-in/out. Hidden while connected.
+  const reconnectBanner = document.createElement("div");
+  reconnectBanner.className = "attendance-reconnect-banner";
+  reconnectBanner.hidden = true;
+
+  const reconnectBannerText = document.createElement("span");
+  reconnectBannerText.className = "attendance-reconnect-banner-text";
+  reconnectBannerText.textContent = "greytHR session expired.";
+
+  const reconnectBannerBtn = document.createElement("button");
+  reconnectBannerBtn.type = "button";
+  reconnectBannerBtn.className = "attendance-reconnect-banner-btn";
+  reconnectBannerBtn.textContent = "Reconnect";
+
+  reconnectBanner.append(reconnectBannerText, reconnectBannerBtn);
+
+  root.append(header, statusRow, times, elapsed, reconnectBanner, actions, feedback);
   container.appendChild(root);
 
   // Location modal (opened on check-in when greytHR offers a choice).
@@ -202,10 +222,72 @@ export function mountAttendance(
   overlay.appendChild(modal);
   container.appendChild(overlay);
 
+  // Reconnect modal (opened when greytHR's session has expired). Lets the user
+  // re-enter ONLY their greytHR password and stay in the office — no logout.
+  const reconnectOverlay = document.createElement("div");
+  reconnectOverlay.className = "attendance-modal-overlay attendance-reconnect-overlay";
+  reconnectOverlay.hidden = true;
+
+  const reconnectModal = document.createElement("div");
+  reconnectModal.className = "attendance-modal attendance-reconnect-modal";
+  reconnectModal.setAttribute("role", "dialog");
+  reconnectModal.setAttribute("aria-modal", "true");
+  reconnectModal.setAttribute("aria-label", "Reconnect greytHR");
+
+  const reconnectTitle = document.createElement("div");
+  reconnectTitle.className = "attendance-modal-title";
+  reconnectTitle.textContent = "Reconnect greytHR";
+
+  const reconnectDesc = document.createElement("div");
+  reconnectDesc.className = "attendance-reconnect-desc";
+  reconnectDesc.textContent =
+    "Your greytHR session expired. Enter your greytHR password to reconnect — you'll stay in the office.";
+
+  const reconnectForm = document.createElement("form");
+  reconnectForm.className = "attendance-reconnect-form";
+
+  const reconnectInput = document.createElement("input");
+  reconnectInput.type = "password";
+  reconnectInput.className = "attendance-reconnect-input";
+  reconnectInput.placeholder = "greytHR password";
+  reconnectInput.autocomplete = "current-password";
+  reconnectInput.setAttribute("aria-label", "greytHR password");
+
+  const reconnectError = document.createElement("div");
+  reconnectError.className = "attendance-reconnect-error";
+  reconnectError.setAttribute("aria-live", "polite");
+
+  const reconnectButtons = document.createElement("div");
+  reconnectButtons.className = "attendance-reconnect-buttons";
+
+  const reconnectSubmit = document.createElement("button");
+  reconnectSubmit.type = "submit";
+  reconnectSubmit.className = "attendance-btn attendance-reconnect-submit";
+  reconnectSubmit.textContent = "Reconnect";
+
+  const reconnectCancel = document.createElement("button");
+  reconnectCancel.type = "button";
+  reconnectCancel.className = "attendance-modal-cancel attendance-reconnect-cancel";
+  reconnectCancel.textContent = "Cancel";
+
+  reconnectButtons.append(reconnectSubmit, reconnectCancel);
+  reconnectForm.append(reconnectInput, reconnectError, reconnectButtons);
+  reconnectModal.append(reconnectTitle, reconnectDesc, reconnectForm);
+  reconnectOverlay.appendChild(reconnectModal);
+  container.appendChild(reconnectOverlay);
+
   let current: AttendanceStatus = "NOT_CHECKED_IN";
   let busy = false;
   let destroyed = false;
   let feedbackTimer: number | undefined;
+  // Checkout misclick guard: the button must be "armed" by a first click before
+  // a second click commits, so a stray click never checks the user out.
+  let checkoutArmed = false;
+  let armTimer: number | undefined;
+  // The action to retry after a successful reconnect (set when a swipe fails
+  // because the greytHR session had expired).
+  let pendingAction: { kind: "check-in" | "check-out"; attLocation?: number } | null = null;
+  let reconnectBusy = false;
   let lastCheckInMs: number | undefined;
   let lastCheckOutMs: number | undefined;
   let workLocation: string | undefined;
@@ -258,6 +340,18 @@ export function mountAttendance(
     dot.style.background = STATUS_COLOR[current];
     checkInBtn.disabled = busy || current === "CHECKED_IN";
     checkOutBtn.disabled = busy || current !== "CHECKED_IN";
+    // Check-out is a two-step confirm to prevent misclicks: the first click arms
+    // it ("Confirm check out"), the second commits. Only meaningful while checked
+    // in; disarm whenever the button can't act.
+    if (current !== "CHECKED_IN" && checkoutArmed) {
+      checkoutArmed = false;
+      if (armTimer !== undefined) {
+        window.clearTimeout(armTimer);
+        armTimer = undefined;
+      }
+    }
+    checkOutBtn.textContent = checkoutArmed ? "Confirm check out" : "Check out";
+    checkOutBtn.classList.toggle("is-armed", checkoutArmed);
   }
 
   /** Show the check-in/out time lines (greytHR's clock, formatted locally). */
@@ -310,6 +404,89 @@ export function mountAttendance(
     focusTarget?.focus();
   }
 
+  /** Arm/disarm the check-out confirmation. Auto-disarms after a short window. */
+  function setCheckoutArmed(armed: boolean): void {
+    checkoutArmed = armed;
+    if (armTimer !== undefined) {
+      window.clearTimeout(armTimer);
+      armTimer = undefined;
+    }
+    if (armed) {
+      armTimer = window.setTimeout(() => {
+        if (!destroyed) {
+          checkoutArmed = false;
+          render();
+        }
+      }, 4000);
+    }
+    render();
+  }
+
+  /** True when an HR failure reason indicates the greytHR session is gone. */
+  function looksLikeSessionLoss(reason: string): boolean {
+    return /sign in with greythr|session expired|sign in again/i.test(reason);
+  }
+
+  function closeReconnect(): void {
+    reconnectOverlay.hidden = true;
+    reconnectInput.value = "";
+    reconnectError.textContent = "";
+  }
+
+  /** Open the reconnect modal (only meaningful when we hold an office token). */
+  function openReconnect(reason?: string): void {
+    if (!readStoredToken()) {
+      // No office JWT (dev path without greytHR login) — nothing to reconnect.
+      if (reason) showFeedback(reason, "error");
+      return;
+    }
+    reconnectError.textContent = "";
+    reconnectOverlay.hidden = false;
+    window.setTimeout(() => reconnectInput.focus(), 0);
+  }
+
+  async function submitReconnect(): Promise<void> {
+    if (reconnectBusy || destroyed) return;
+    const password = reconnectInput.value;
+    if (!password) {
+      reconnectError.textContent = "Password is required.";
+      reconnectInput.focus();
+      return;
+    }
+    reconnectBusy = true;
+    reconnectSubmit.disabled = true;
+    reconnectError.textContent = "";
+    try {
+      const res = await fetchFn(`${base}/api/auth/greythr/reconnect`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ password }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; error?: string }
+        | null;
+      if (res.ok && data?.ok) {
+        closeReconnect();
+        showFeedback("Reconnected to greytHR.", "ok");
+        await refresh();
+        // Resume the action the user originally clicked, now that we have a session.
+        if (pendingAction) {
+          const next = pendingAction;
+          pendingAction = null;
+          void act(next.kind, next.attLocation);
+        }
+      } else {
+        reconnectError.textContent =
+          data?.error ?? "Reconnect failed. Check your password and try again.";
+      }
+    } catch {
+      reconnectError.textContent = "Could not reach the server. Try again.";
+    } finally {
+      reconnectBusy = false;
+      reconnectSubmit.disabled = false;
+    }
+  }
+
   async function refresh(): Promise<void> {
     const sessionId = opts.getSessionId();
     if (!sessionId) {
@@ -344,6 +521,15 @@ export function mountAttendance(
         portalLink.removeAttribute("href");
         portalLink.hidden = true;
       }
+      // Surface (or clear) the proactive reconnect banner from the live signal.
+      // Only present for greytHR identities; undefined leaves the banner hidden.
+      if (data.greythrConnected === false) {
+        reconnectBanner.hidden = false;
+      } else {
+        reconnectBanner.hidden = true;
+        // A live session means any stale pending action is no longer blocked.
+        if (data.greythrConnected === true && reconnectOverlay.hidden) pendingAction = null;
+      }
       root.hidden = false;
       // Once signed in, no location is needed — never leave the modal open.
       if (current === "CHECKED_IN" && !overlay.hidden) closeModal();
@@ -376,7 +562,16 @@ export function mountAttendance(
         showFeedback(kind === "check-in" ? "Checked in." : "Checked out.", "ok");
         void refresh();
       } else {
-        showFeedback(data?.reason ?? "HR action failed. Try again later.", "error");
+        const reason = data?.reason ?? "HR action failed. Try again later.";
+        // If the greytHR session expired, offer in-place reconnect (and retry the
+        // same action afterward) instead of forcing a full office logout/login.
+        if (looksLikeSessionLoss(reason) && readStoredToken()) {
+          pendingAction = { kind, attLocation };
+          showFeedback("greytHR session expired — reconnect to continue.", "error");
+          openReconnect();
+        } else {
+          showFeedback(reason, "error");
+        }
       }
     } catch {
       showFeedback("HR unavailable. The office still works.", "error");
@@ -393,14 +588,49 @@ export function mountAttendance(
     else void act("check-in");
   }
 
-  checkInBtn.addEventListener("click", startCheckIn);
-  checkOutBtn.addEventListener("click", () => void act("check-out"));
+  checkInBtn.addEventListener("click", () => {
+    if (checkoutArmed) setCheckoutArmed(false);
+    startCheckIn();
+  });
+  checkOutBtn.addEventListener("click", () => {
+    if (busy || destroyed || current !== "CHECKED_IN") return;
+    // First click arms; second click within the window commits.
+    if (!checkoutArmed) {
+      setCheckoutArmed(true);
+      return;
+    }
+    setCheckoutArmed(false);
+    void act("check-out");
+  });
   modalCancel.addEventListener("click", closeModal);
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeModal();
   });
+  reconnectForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    void submitReconnect();
+  });
+  reconnectBannerBtn.addEventListener("click", () => openReconnect());
+  reconnectCancel.addEventListener("click", () => {
+    pendingAction = null;
+    closeReconnect();
+  });
+  reconnectOverlay.addEventListener("click", (e) => {
+    if (e.target === reconnectOverlay) {
+      pendingAction = null;
+      closeReconnect();
+    }
+  });
   const onKeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape" && !overlay.hidden) closeModal();
+    if (e.key !== "Escape") return;
+    if (!reconnectOverlay.hidden) {
+      pendingAction = null;
+      closeReconnect();
+    } else if (!overlay.hidden) {
+      closeModal();
+    } else if (checkoutArmed) {
+      setCheckoutArmed(false);
+    }
   };
   window.addEventListener("keydown", onKeydown);
 
@@ -408,7 +638,7 @@ export function mountAttendance(
   void refresh();
   if (pollMs > 0) {
     pollTimer = window.setInterval(() => {
-      if (!destroyed && !busy && overlay.hidden) void refresh();
+      if (!destroyed && !busy && overlay.hidden && reconnectOverlay.hidden) void refresh();
     }, pollMs);
   }
 
@@ -418,9 +648,11 @@ export function mountAttendance(
       destroyed = true;
       if (feedbackTimer) window.clearTimeout(feedbackTimer);
       if (pollTimer !== undefined) window.clearInterval(pollTimer);
+      if (armTimer !== undefined) window.clearTimeout(armTimer);
       window.removeEventListener("keydown", onKeydown);
       stopTicker();
       overlay.remove();
+      reconnectOverlay.remove();
       root.remove();
     },
   };

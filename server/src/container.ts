@@ -35,6 +35,7 @@ import {
   type GoogleTokenStore,
 } from "./auth/google-token.store";
 import { EventService } from "./events/event.service";
+import { WhiteboardService } from "./whiteboard/whiteboard.service";
 import { PresenceService } from "./presence/presence.service";
 import type { HrAdapter } from "./integrations/hr/hr-adapter";
 import { GreytHrEssAttendanceAdapter } from "./integrations/hr/greythr-ess-attendance.adapter";
@@ -107,6 +108,8 @@ const calendar: CalendarAdapter = googleCalendar
   : mockCalendar;
 const events = new EventService();
 const presence = new PresenceService(calendar, events);
+// Per-department collaborative whiteboards (in-memory; cleared on restart).
+const whiteboard = new WhiteboardService();
 
 // --- Multi-floor building / map repository ---------------------------------
 // Source of the ACTIVE building (a stack of floors). The room reads the active
@@ -239,6 +242,8 @@ export const container = {
   googleCalConfigured,
   events,
   presence,
+  /** Per-department collaborative whiteboards (in-memory stroke store). */
+  whiteboard,
   /** Ambient office NPCs (framework-free; the room wires effects to the wire). */
   npcs,
   /** Active building + saved maps (the room reads the active building at create). */

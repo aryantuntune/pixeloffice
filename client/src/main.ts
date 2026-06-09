@@ -40,6 +40,12 @@ import {
   type FloorChangedPayload,
   type LocationPayload,
   type FloorSyncCodePayload,
+  type RtcCallS2C,
+  type RtcSignalS2C,
+  type WhiteboardStateS2C,
+  type WhiteboardUpdateS2C,
+  type WhiteboardClearS2C,
+  type Department,
   type Building,
   type Floor,
   type PlayerSnapshot,
@@ -69,6 +75,8 @@ import { mountMinimap, type MinimapHandle } from "./ui/minimap";
 import { mountSettings, readHideNpcs, type SettingsHandle } from "./ui/settings";
 import { mountOnboarding, type OnboardingHandle } from "./ui/onboarding";
 import { createMapStudio, type MapStudioHandle } from "./ui/map-studio";
+import { mountProximityCall, type ProximityCallHandle } from "./ui/proximity-call";
+import { mountWhiteboard, type WhiteboardHandle } from "./ui/whiteboard";
 
 const gameRoot = document.getElementById("game-root")!;
 const hudRoot = document.getElementById("hud-root")!;
@@ -137,6 +145,14 @@ let onboarding: OnboardingHandle | null = null;
 // reconnects (like admin/settings). It is self-contained: it fetches/saves
 // buildings through /api/maps and never touches the live game or avatars.
 let mapStudio: MapStudioHandle | null = null;
+// Proximity voice/video. Rebuilt per session (binds to the live store +
+// connection). Subscribes to the store to surface call buttons within 2 tiles
+// and auto-mutes/ends a call on leaving proximity. Media is P2P WebRTC; the
+// server only relays signaling.
+let proximityCall: ProximityCallHandle | null = null;
+// Per-department collaborative whiteboards. Rebuilt per session (binds to the
+// live store + connection). Strokes sync through the server; never floor-scoped.
+let whiteboard: WhiteboardHandle | null = null;
 
 // Cached active building geometry (parsed from GET /api/maps/active). Multi-floor
 // rendering needs the full Floor geometry (areas/solid/desks/portals), but
@@ -327,6 +343,11 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
     onGameInteract: (gameId) => {
       conn.send(C2S.JOIN_GAME, { gameId });
     },
+    // Walking to a department's white table + [E] opens that team's Excalidraw
+    // board. The board overlay is created lazily by the whiteboard controller.
+    onWhiteboardInteract: (department) => {
+      whiteboard?.open(department as Department);
+    },
     // Double-clicking the local avatar opens the profile modal.
     onProfileOpen: () => {
       const self = localStore.self();
@@ -471,6 +492,28 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
     onEmote: (emote: Emote) => conn.send(C2S.EMOTE, { emote }),
   });
 
+  // Proximity voice/video (per session). Subscribes to the store internally to
+  // detect who is within 2 tiles, surfaces the Speak/Video buttons, and drives
+  // the WebRTC calls. C2S goes over the live connection; the S2C relay messages
+  // are routed in here from the bridge below.
+  proximityCall = mountProximityCall(hudRoot, {
+    store: localStore,
+    getSelfId: () => selfId,
+    sendCall: (payload) => conn.send(C2S.RTC_CALL, payload),
+    sendSignal: (payload) => conn.send(C2S.RTC_SIGNAL, payload),
+    toast: (message) => toasts.show(message, "info"),
+  });
+
+  // Per-department Excalidraw whiteboard (per session). Opened by walking to a
+  // department's white table and pressing [E]; locks avatar movement while open.
+  whiteboard = mountWhiteboard(hudRoot, {
+    open: (b) => conn.send(C2S.WHITEBOARD_OPEN, { board: b }),
+    close: (b) => conn.send(C2S.WHITEBOARD_CLOSE, { board: b }),
+    update: (b, elements) => conn.send(C2S.WHITEBOARD_UPDATE, { board: b, elements }),
+    clear: (b) => conn.send(C2S.WHITEBOARD_CLEAR, { board: b }),
+    onOpenChange: (isOpen) => game?.setInputLocked(isOpen),
+  });
+
   // Profile card (per session — its Wave button emotes from the live connection).
   profileCard = mountProfileCard(hudRoot, {
     onWave: () => conn.send(C2S.EMOTE, { emote: "WAVE" }),
@@ -577,6 +620,9 @@ function registerBridge(conn: Connection): void {
 
   conn.on<PlayerLeftPayload>(S2C.PLAYER_LEFT, ({ sessionId }) => {
     if (!game || !store) return;
+    // Tear down any proximity call with the departing peer BEFORE the store drops
+    // them (so the controller can still resolve their name for the toast).
+    proximityCall?.handlePeerGone(sessionId);
     store.removePlayer(sessionId);
     game.removePlayer(sessionId);
   });
@@ -671,6 +717,26 @@ function registerBridge(conn: Connection): void {
     settings?.setPairCode(code);
   });
 
+  // Proximity call relay (P2P WebRTC). The server validated these came from a
+  // same-floor peer; the controller owns the call state machine + media.
+  conn.on<RtcCallS2C>(S2C.RTC_CALL, (payload) => {
+    proximityCall?.handleCall(payload);
+  });
+  conn.on<RtcSignalS2C>(S2C.RTC_SIGNAL, (payload) => {
+    proximityCall?.handleSignal(payload);
+  });
+
+  // Whiteboard sync (department-scoped). The controller owns the canvas state.
+  conn.on<WhiteboardStateS2C>(S2C.WHITEBOARD_STATE, (payload) => {
+    whiteboard?.handleState(payload);
+  });
+  conn.on<WhiteboardUpdateS2C>(S2C.WHITEBOARD_UPDATE, (payload) => {
+    whiteboard?.handleUpdate(payload);
+  });
+  conn.on<WhiteboardClearS2C>(S2C.WHITEBOARD_CLEAR, (payload) => {
+    whiteboard?.handleClear(payload);
+  });
+
   // Floor change: sent ONLY to the player whose own avatar stepped onto a portal
   // (human agency — the server never moves anyone automatically). Rebuild the
   // floor view from the payload: swap the rendered world to the new floor, reset
@@ -744,6 +810,10 @@ function teardownSession(): void {
   emoteBar = null;
   profileCard?.destroy();
   profileCard = null;
+  proximityCall?.destroy();
+  proximityCall = null;
+  whiteboard?.destroy();
+  whiteboard = null;
   minimap?.destroy();
   minimap = null;
   clearFollowChip();

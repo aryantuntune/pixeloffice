@@ -144,6 +144,27 @@ export const PRESENCE_META: Record<PresenceState, { label: string; color: string
   [PresenceState.OFFLINE]: { label: "Offline", color: "#5b6470", emoji: "" },
 };
 
+// ---------------------------------------------------------------------------
+// Whiteboard — one collaborative board PER DEPARTMENT (the board key is the
+// Department name), backed by Excalidraw. The wire unit is an Excalidraw
+// element kept OPAQUE here: we only depend on `id` + `version` (+ `versionNonce`
+// for tie-breaks, `isDeleted` for tombstones) to reconcile concurrent edits.
+// Everything else passes through untouched so older clients keep compiling.
+// Framework-free + serializable.
+// ---------------------------------------------------------------------------
+export interface WhiteboardElement {
+  /** Excalidraw element id (stable across edits). */
+  id: string;
+  /** Monotonic edit counter Excalidraw bumps on every change (reconcile key). */
+  version: number;
+  /** Random tiebreaker when two edits share a version (last-writer-wins). */
+  versionNonce?: number;
+  /** Tombstone flag — a deleted element is kept so the deletion syncs. */
+  isDeleted?: boolean;
+  /** All other Excalidraw element fields (type, points, x, y, …) pass through. */
+  [key: string]: unknown;
+}
+
 export type GameType = "ping-pong" | "tic-tac-toe" | "connect-four" | "pool";
 
 export interface GamePlayer {

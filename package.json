@@ -16,6 +16,7 @@
     "dev:client": "npm run dev -w client",
     "test": "npm run test -w server",
     "build": "npm run build -w client",
+    "serve": "bash scripts/serve-https.sh",
     "smoke": "npm run smoke -w server",
     "google-stub": "npm run google-stub -w server",
     "smoke:calendar": "npm run smoke:calendar -w server",

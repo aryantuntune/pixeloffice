@@ -14,6 +14,7 @@
 import Phaser from "phaser";
 import {
   EMOTE_EMOJI,
+  MAIN_OFFICE_FLOOR_ID,
   PresenceState,
   areaAt,
   buildOfficeMap,
@@ -173,6 +174,8 @@ export class OfficeScene extends Phaser.Scene {
   private panResumeTimer?: Phaser.Time.TimerEvent;
   private keyE!: Phaser.Input.Keyboard.Key;
   private currentPromptGameId?: string;
+  /** Department whose white table the player is standing next to (for [E]). */
+  private currentPromptBoard?: string;
 
   constructor() {
     super({ key: "office" });
@@ -264,9 +267,26 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private triggerInteraction(): void {
+    if (this.currentPromptBoard) {
+      this.game.events.emit("whiteboard-interact", this.currentPromptBoard);
+      return;
+    }
     if (this.currentPromptGameId) {
       this.game.events.emit("lounge-game-interact", this.currentPromptGameId);
     }
+  }
+
+  /** Department of a `whiteboard` table within one tile of (x,y), else null. */
+  private whiteboardDeptNear(x: number, y: number): string | null {
+    for (const f of this.map.furniture) {
+      if (f.kind !== "whiteboard") continue;
+      // One-tile ring around the table's footprint (f.w × f.h tiles).
+      if (x < f.x - 1 || x > f.x + f.w) continue;
+      if (y < f.y - 1 || y > f.y + f.h) continue;
+      const area = areaAt(this.map, f.x, f.y);
+      if (area?.department) return area.department;
+    }
+    return null;
   }
 
   // -------------------------------------------------------------------------
@@ -633,18 +653,52 @@ export class OfficeScene extends Phaser.Scene {
   private checkGameProximity(x: number, y: number): void {
     if (!this.cb.onInteractPrompt) return;
 
-    // Derive game stations from the active floor's furniture rather than
-    // hardcoding a floor id + coordinates. This keeps the [E] prompts in sync
-    // with wherever the lounge furniture actually lives (it sits on the rich
-    // main-office floor, not the ground floor), and survives map edits.
-    const station = this.gameStationNear(x, y);
-    if (station) {
-      this.currentPromptGameId = station.gameId;
-      this.cb.onInteractPrompt(station.prompt, station.gameId);
+    // Department white tables: press [E] to open that team's Excalidraw board.
+    // Checked before games (a table can sit on any department floor).
+    const board = this.whiteboardDeptNear(x, y);
+    if (board) {
+      this.currentPromptBoard = board;
+      this.currentPromptGameId = undefined;
+      this.cb.onInteractPrompt(`Press [E] to open the ${board} Whiteboard`);
       return;
+    }
+    this.currentPromptBoard = undefined;
+
+    // Game stations live only on the rich main-office floor. Gate on its stable
+    // id (not the literal "ground") so the floor reorder can't silently hide the
+    // [E] prompts. On other floors these tiles are ordinary.
+    if (this.floorId === MAIN_OFFICE_FLOOR_ID) {
+      // Ping Pong: x: 38..40, y: 21..22
+      if (x >= 37 && x <= 41 && y >= 20 && y <= 23) {
+        this.currentPromptGameId = "lounge:ping-pong";
+        this.cb.onInteractPrompt("Press [E] to play Table Tennis", this.currentPromptGameId);
+        return;
+      }
+
+      // Pool table footprint x:43..45, y:21..22 → prompt on the surrounding ring.
+      if (x >= 42 && x <= 46 && y >= 20 && y <= 23) {
+        this.currentPromptGameId = "lounge:pool";
+        this.cb.onInteractPrompt("Press [E] to play Pool", this.currentPromptGameId);
+        return;
+      }
+
+      // Arcade Cabinet: x: 35, y: 15
+      if (Math.abs(x - 35) <= 1 && Math.abs(y - 15) <= 1) {
+        this.currentPromptGameId = "lounge:connect-four";
+        this.cb.onInteractPrompt("Press [E] to play Connect Four", this.currentPromptGameId);
+        return;
+      }
+
+      // Chess Table: x: 45, y: 15
+      if (Math.abs(x - 45) <= 1 && Math.abs(y - 15) <= 1) {
+        this.currentPromptGameId = "lounge:tic-tac-toe";
+        this.cb.onInteractPrompt("Press [E] to play Tic-Tac-Toe", this.currentPromptGameId);
+        return;
+      }
     }
 
     this.currentPromptGameId = undefined;
+    this.currentPromptBoard = undefined;
     this.currentPortalLabel = null;
     this.cb.onInteractPrompt(null);
   }

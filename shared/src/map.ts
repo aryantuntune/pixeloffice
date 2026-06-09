@@ -279,6 +279,7 @@ export function buildOfficeMap(): OfficeMap {
   // HR right empty space (x: 29..32):
   furniture.push({ kind: "vending-machine", x: 30, y: 23, w: 1, h: 1, solid: true });
   furniture.push({ kind: "water-cooler", x: 31, y: 23, w: 1, h: 1, solid: true });
+  furniture.push({ kind: "whiteboard", x: 29, y: 25, w: 2, h: 1, solid: true });
 
   // Collision grid.
   const solid: boolean[][] = Array.from({ length: MAP_H }, () => Array<boolean>(MAP_W).fill(false));

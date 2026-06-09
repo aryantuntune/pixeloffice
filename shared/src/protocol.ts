@@ -14,6 +14,7 @@ import type {
   PresenceState,
   SocialEvent,
   ActiveGame,
+  WhiteboardElement,
 } from "./types";
 
 export const ROOM_NAME = "office";
@@ -42,6 +43,28 @@ export const C2S = {
    * SetLocationSyncPayload + S2C.LOCATION + docs/FLOOR-LOCATION-CONTRACT.md.
    */
   SET_LOCATION_SYNC: "set-location-sync",
+  /**
+   * Proximity voice/video CALL CONTROL relayed to one specific co-located peer
+   * (request / accept / reject / hangup / cancel). The server is a dumb relay:
+   * it validates the peer is a same-floor human, swaps `to` for the sender's id,
+   * and forwards as S2C.RTC_CALL. It NEVER logs who-called-whom or call content
+   * (presence, not surveillance). See RtcCallC2S / RtcCallS2C.
+   */
+  RTC_CALL: "rtc-call",
+  /**
+   * Opaque WebRTC SIGNALING (SDP offer/answer + ICE candidates) relayed to one
+   * co-located peer. The `data` blob is opaque to the server — media never
+   * touches it (P2P mesh). Relayed as S2C.RTC_SIGNAL. See RtcSignalC2S.
+   */
+  RTC_SIGNAL: "rtc-signal",
+  /** Subscribe to a department whiteboard (server replies S2C.WHITEBOARD_STATE). */
+  WHITEBOARD_OPEN: "wb-open",
+  /** Unsubscribe from a department whiteboard. */
+  WHITEBOARD_CLOSE: "wb-close",
+  /** Push changed Excalidraw elements to a department whiteboard (broadcast). */
+  WHITEBOARD_UPDATE: "wb-update",
+  /** Clear a department whiteboard (broadcast to viewers). */
+  WHITEBOARD_CLEAR: "wb-clear",
 } as const;
 
 /** Options sent when joining the room (dev auth profile). */
@@ -158,6 +181,16 @@ export const S2C = {
    * disable / leave. There is no new C2S message for this.
    */
   FLOOR_SYNC_CODE: "floor-sync-code",
+  /** Relayed proximity call control from a co-located peer (see RtcCallS2C). */
+  RTC_CALL: "rtc-call",
+  /** Relayed WebRTC signaling from a co-located peer (see RtcSignalS2C). */
+  RTC_SIGNAL: "rtc-signal",
+  /** Full current state of a whiteboard, sent to a client when it opens one. */
+  WHITEBOARD_STATE: "wb-state",
+  /** Changed elements another viewer made on a whiteboard. */
+  WHITEBOARD_UPDATE: "wb-update",
+  /** A whiteboard was cleared by a viewer. */
+  WHITEBOARD_CLEAR: "wb-clear",
 } as const;
 
 /**
@@ -344,4 +377,98 @@ export interface GameInputPayload {
 
 export interface GameUpdatePayload {
   game: ActiveGame;
+}
+
+// ----------------------------- proximity calls -----------------------------
+// Proximity voice/video over P2P WebRTC. The server relays ONLY signaling +
+// call control between same-floor peers; media is peer-to-peer and never
+// touches the server. Backward-compatible additive messages: a pre-call client
+// simply never sends/handles them (and the room's "*" handler tolerates the
+// C2S types the other direction).
+
+/** What media a proximity call carries. */
+export type RtcCallKind = "audio" | "video";
+
+/**
+ * Call lifecycle control signals:
+ *   - request: caller asks a nearby peer to start a call (peer accepts/rejects).
+ *   - accept : callee agreed — both sides begin WebRTC negotiation.
+ *   - reject : callee declined.
+ *   - cancel : caller withdrew the request before it was answered.
+ *   - hangup : either side ended an established call.
+ */
+export type RtcCallAction = "request" | "accept" | "reject" | "cancel" | "hangup";
+
+/** C2S: proximity call control aimed at a specific co-located peer. */
+export interface RtcCallC2S {
+  /** Target peer's sessionId (must be a same-floor human). */
+  to: string;
+  kind: RtcCallKind;
+  action: RtcCallAction;
+}
+
+/** S2C: relayed call control, with the originator identified for the UI card. */
+export interface RtcCallS2C {
+  /** Originating peer's sessionId. */
+  from: string;
+  /** Originator display name (so the incoming-call card reads "Alice is calling"). */
+  fromName: string;
+  kind: RtcCallKind;
+  action: RtcCallAction;
+}
+
+/** C2S: opaque WebRTC signaling blob relayed to a co-located peer. */
+export interface RtcSignalC2S {
+  /** Target peer's sessionId. */
+  to: string;
+  /** Opaque to the server: `{ sdp }` (offer/answer) or `{ candidate }` (ICE). */
+  data: unknown;
+}
+
+/** S2C: relayed WebRTC signaling blob, with the originator identified. */
+export interface RtcSignalS2C {
+  from: string;
+  data: unknown;
+}
+
+// ------------------------------- whiteboard --------------------------------
+// Per-department collaborative whiteboards backed by Excalidraw. `board` is a
+// Department name. The server stores the latest version of each element
+// in-memory and relays changes to everyone currently viewing the same board
+// (department-scoped, NOT floor-scoped — a team spans floors).
+
+/** C2S: open (subscribe to) / close a department board. */
+export interface WhiteboardOpenC2S {
+  board: string;
+}
+export interface WhiteboardCloseC2S {
+  board: string;
+}
+
+/** C2S: push the elements that changed locally (added/edited/deleted). */
+export interface WhiteboardUpdateC2S {
+  board: string;
+  elements: WhiteboardElement[];
+}
+
+/** C2S: clear a board. */
+export interface WhiteboardClearC2S {
+  board: string;
+}
+
+/** S2C: the full current element set of a board (sent to the opener). */
+export interface WhiteboardStateS2C {
+  board: string;
+  elements: WhiteboardElement[];
+}
+
+/** S2C: elements another viewer changed (added/edited/deleted). */
+export interface WhiteboardUpdateS2C {
+  board: string;
+  elements: WhiteboardElement[];
+}
+
+/** S2C: a board was cleared. */
+export interface WhiteboardClearS2C {
+  board: string;
 }

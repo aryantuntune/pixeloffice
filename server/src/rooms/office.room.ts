@@ -58,6 +58,21 @@ import {
   type SetLocationSyncPayload,
   type LocationPayload,
   type FloorSyncCodePayload,
+  type RtcCallC2S,
+  type RtcCallS2C,
+  type RtcSignalC2S,
+  type RtcSignalS2C,
+  type RtcCallAction,
+  type WhiteboardOpenC2S,
+  type WhiteboardCloseC2S,
+  type WhiteboardUpdateC2S,
+  type WhiteboardClearC2S,
+  type WhiteboardStateS2C,
+  type WhiteboardUpdateS2C,
+  type WhiteboardClearS2C,
+  type WhiteboardElement,
+  chebyshev,
+  CALL_REQUEST_TILES,
   type SocialEvent,
   type ToastPayload,
   type WelcomePayload,
@@ -109,6 +124,26 @@ const CHAT_RATE = 5; // messages/sec
 const CHAT_WINDOW_MS = 1000;
 const ACTION_RATE = 10; // status/join/leave actions per window
 const ACTION_WINDOW_MS = 1000;
+// WebRTC signaling (SDP/ICE) is bursty during negotiation — ICE alone can emit
+// dozens of candidates in under a second. A generous bucket keeps the relay
+// flowing while still capping a flood. Call CONTROL reuses the action bucket.
+const RTC_SIGNAL_RATE = 80;
+const RTC_SIGNAL_WINDOW_MS = 1000;
+const RTC_CALL_ACTIONS = new Set<RtcCallAction>([
+  "request",
+  "accept",
+  "reject",
+  "cancel",
+  "hangup",
+]);
+// Whiteboard: throttled element-batch updates, plus open/close/clear. Updates
+// are debounced client-side (~one batch per change burst), so a modest rate is
+// plenty while still bounding abuse.
+const WB_RATE = 30;
+const WB_WINDOW_MS = 1000;
+const WB_MAX_ELEMENTS_PER_MSG = 2000; // cap a single update batch
+const WB_MAX_ELEMENT_BYTES = 131072; // 128KB — fits long freedraw strokes (points + pressures)
+const WB_DEPARTMENTS = new Set<string>(DEPARTMENTS);
 
 // Same trust-proxy decision the REST rate limiter uses (index.ts). Only when the
 // server sits behind a vetted reverse proxy is X-Forwarded-For honored for the
@@ -202,6 +237,12 @@ export class OfficeRoom extends Room {
   private readonly moveBuckets = new Map<string, TokenBucket>();
   private readonly chatBuckets = new Map<string, TokenBucket>();
   private readonly actionBuckets = new Map<string, TokenBucket>();
+  /** Per-session WebRTC signaling bucket (bursty ICE; created on join). */
+  private readonly rtcBuckets = new Map<string, TokenBucket>();
+  /** Per-session whiteboard-stroke bucket (created on join). */
+  private readonly wbBuckets = new Map<string, TokenBucket>();
+  /** board (department) -> sessionIds currently viewing it (broadcast targets). */
+  private readonly wbSubs = new Map<string, Set<string>>();
 
   /** Active multiplayer games in the lounge. */
   private readonly games = new Map<string, ActiveGame>();
@@ -530,6 +571,8 @@ export class OfficeRoom extends Room {
     this.moveBuckets.set(client.sessionId, new TokenBucket(MOVE_RATE, MOVE_WINDOW_MS, now));
     this.chatBuckets.set(client.sessionId, new TokenBucket(CHAT_RATE, CHAT_WINDOW_MS, now));
     this.actionBuckets.set(client.sessionId, new TokenBucket(ACTION_RATE, ACTION_WINDOW_MS, now));
+    this.rtcBuckets.set(client.sessionId, new TokenBucket(RTC_SIGNAL_RATE, RTC_SIGNAL_WINDOW_MS, now));
+    this.wbBuckets.set(client.sessionId, new TokenBucket(WB_RATE, WB_WINDOW_MS, now));
 
     const snapshot: PlayerSnapshot = {
       sessionId: client.sessionId,
@@ -637,6 +680,11 @@ export class OfficeRoom extends Room {
     this.moveBuckets.delete(sessionId);
     this.chatBuckets.delete(sessionId);
     this.actionBuckets.delete(sessionId);
+    this.rtcBuckets.delete(sessionId);
+    this.wbBuckets.delete(sessionId);
+    // Drop this session from every whiteboard it was viewing (no broadcast
+    // needed — viewers are not shown a live presence list of the board).
+    for (const subs of this.wbSubs.values()) subs.delete(sessionId);
     this.joining.delete(sessionId);
 
     const left: PlayerLeftPayload = { sessionId };
@@ -688,6 +736,22 @@ export class OfficeRoom extends Room {
     );
     this.onMessage(C2S.SET_LOCATION_SYNC, (client, payload: SetLocationSyncPayload) =>
       this.handleSetLocationSync(client, payload),
+    );
+    this.onMessage(C2S.RTC_CALL, (client, payload: RtcCallC2S) => this.handleRtcCall(client, payload));
+    this.onMessage(C2S.RTC_SIGNAL, (client, payload: RtcSignalC2S) =>
+      this.handleRtcSignal(client, payload),
+    );
+    this.onMessage(C2S.WHITEBOARD_OPEN, (client, payload: WhiteboardOpenC2S) =>
+      this.handleWhiteboardOpen(client, payload),
+    );
+    this.onMessage(C2S.WHITEBOARD_CLOSE, (client, payload: WhiteboardCloseC2S) =>
+      this.handleWhiteboardClose(client, payload),
+    );
+    this.onMessage(C2S.WHITEBOARD_UPDATE, (client, payload: WhiteboardUpdateC2S) =>
+      this.handleWhiteboardUpdate(client, payload),
+    );
+    this.onMessage(C2S.WHITEBOARD_CLEAR, (client, payload: WhiteboardClearC2S) =>
+      this.handleWhiteboardClear(client, payload),
     );
     this.onMessage(C2S.JOIN_GAME, (client, payload: any) => this.handleJoinGame(client, payload));
     this.onMessage(C2S.LEAVE_GAME, (client, payload: any) => this.handleLeaveGame(client, payload));
@@ -1329,6 +1393,144 @@ export class OfficeRoom extends Room {
   }
 
   // -------------------------------------------------------------------------
+  // Proximity voice/video signaling relay (P2P WebRTC).
+  //
+  // The room is a DUMB RELAY: it validates the target is a same-floor human and
+  // forwards the opaque payload to that one peer. Media is peer-to-peer and
+  // never touches the server. PRIVACY (Constitution: presence, not surveillance)
+  // — we NEVER log who called whom, call kind, duration, or any call content.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resolve the target client IFF it is a HUMAN currently on the SAME floor as
+   * the sender (and not the sender themselves). Returns undefined otherwise so
+   * the caller silently drops the relay. Same-floor is the hard gate; an
+   * additional distance gate is applied only to call *requests* (see below).
+   */
+  private rtcPeer(client: Client, targetSessionId: unknown): Client | undefined {
+    if (typeof targetSessionId !== "string" || targetSessionId === client.sessionId) return undefined;
+    const me = this.players.get(client.sessionId);
+    const them = this.players.get(targetSessionId);
+    if (!me || me.isNpc || !them || them.isNpc) return undefined;
+    const myFloor = me.floorId ?? this.groundFloorId;
+    const theirFloor = them.floorId ?? this.groundFloorId;
+    if (myFloor !== theirFloor) return undefined;
+    return this.clientFor(targetSessionId);
+  }
+
+  /** Relay proximity call control (request/accept/reject/cancel/hangup). */
+  private handleRtcCall(client: Client, payload: RtcCallC2S): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const kind = payload?.kind;
+    const action = payload?.action;
+    if (kind !== "audio" && kind !== "video") return;
+    if (!RTC_CALL_ACTIONS.has(action)) return;
+
+    const me = this.players.get(client.sessionId);
+    if (!me || me.isNpc) return;
+    const peer = this.rtcPeer(client, payload?.to);
+    if (!peer) return;
+
+    // Soft anti-spam gate: a call may only be INITIATED when the two avatars are
+    // genuinely near (a touch wider than the UI's button radius so a click is
+    // not lost to a one-tile drift). accept/reject/cancel/hangup are NOT
+    // distance-gated so an in-progress call survives normal walking.
+    if (action === "request") {
+      const them = this.players.get(peer.sessionId)!;
+      if (chebyshev(me.x, me.y, them.x, them.y) > CALL_REQUEST_TILES) return;
+    }
+
+    const out: RtcCallS2C = { from: client.sessionId, fromName: me.name, kind, action };
+    peer.send(S2C.RTC_CALL, out);
+  }
+
+  /** Relay an opaque WebRTC signaling blob (SDP offer/answer or ICE) to a peer. */
+  private handleRtcSignal(client: Client, payload: RtcSignalC2S): void {
+    if (!this.allow(this.rtcBuckets, client.sessionId)) return;
+    if (payload?.data === undefined) return;
+    const peer = this.rtcPeer(client, payload?.to);
+    if (!peer) return;
+    const out: RtcSignalS2C = { from: client.sessionId, data: payload.data };
+    peer.send(S2C.RTC_SIGNAL, out);
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-department collaborative whiteboards.
+  //
+  // `board` is a Department name. Boards are DEPARTMENT-scoped (a team spans
+  // floors), not floor-scoped: strokes go to everyone currently VIEWING that
+  // board. The server stores strokes (WhiteboardService) so a late opener gets
+  // the full board. PRIVACY: only the drawing is kept — never who drew what.
+  // -------------------------------------------------------------------------
+
+  /** Subscriber set for a board (created on first open). */
+  private wbSubscribers(board: string): Set<string> {
+    let set = this.wbSubs.get(board);
+    if (!set) {
+      set = new Set();
+      this.wbSubs.set(board, set);
+    }
+    return set;
+  }
+
+  /** Send to every HUMAN client currently viewing `board` except `exceptId`. */
+  private broadcastToBoard(board: string, exceptId: string | null, type: string, message: unknown): void {
+    const subs = this.wbSubs.get(board);
+    if (!subs) return;
+    for (const c of this.clients) {
+      if (c.sessionId === exceptId) continue;
+      if (subs.has(c.sessionId)) c.send(type, message);
+    }
+  }
+
+  private handleWhiteboardOpen(client: Client, payload: WhiteboardOpenC2S): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const board = payload?.board;
+    if (!WB_DEPARTMENTS.has(board)) return;
+    const snap = this.players.get(client.sessionId);
+    if (!snap || snap.isNpc) return;
+    this.wbSubscribers(board).add(client.sessionId);
+    const state: WhiteboardStateS2C = { board, elements: container.whiteboard.elements(board) };
+    client.send(S2C.WHITEBOARD_STATE, state);
+  }
+
+  private handleWhiteboardClose(client: Client, payload: WhiteboardCloseC2S): void {
+    const board = payload?.board;
+    if (typeof board !== "string") return;
+    this.wbSubs.get(board)?.delete(client.sessionId);
+  }
+
+  private handleWhiteboardUpdate(client: Client, payload: WhiteboardUpdateC2S): void {
+    if (!this.allow(this.wbBuckets, client.sessionId)) return;
+    const board = payload?.board;
+    if (!WB_DEPARTMENTS.has(board)) return;
+    const snap = this.players.get(client.sessionId);
+    if (!snap || snap.isNpc) return;
+    // Must be a viewer of the board to edit it (open it first).
+    if (!this.wbSubs.get(board)?.has(client.sessionId)) return;
+    const elements = sanitizeElements(payload?.elements);
+    if (elements.length === 0) return;
+    // Merge by version; only rebroadcast what actually changed (drops echoes).
+    const applied = container.whiteboard.applyElements(board, elements);
+    if (applied.length === 0) return;
+    const out: WhiteboardUpdateS2C = { board, elements: applied };
+    this.broadcastToBoard(board, client.sessionId, S2C.WHITEBOARD_UPDATE, out);
+  }
+
+  private handleWhiteboardClear(client: Client, payload: WhiteboardClearC2S): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const board = payload?.board;
+    if (!WB_DEPARTMENTS.has(board)) return;
+    const snap = this.players.get(client.sessionId);
+    if (!snap || snap.isNpc) return;
+    if (!this.wbSubs.get(board)?.has(client.sessionId)) return;
+    container.whiteboard.clear(board);
+    const out: WhiteboardClearS2C = { board };
+    // Include the sender so every viewer (incl. the clearer's other tabs) resets.
+    this.broadcastToBoard(board, null, S2C.WHITEBOARD_CLEAR, out);
+  }
+
+  // -------------------------------------------------------------------------
   // Lounge Games logic
   // -------------------------------------------------------------------------
 
@@ -1912,6 +2114,33 @@ function manhattan(ax: number, ay: number, bx: number, by: number): number {
 
 function isValidDir(dir: unknown): dir is Direction {
   return dir === "up" || dir === "down" || dir === "left" || dir === "right";
+}
+
+/**
+ * Validate an inbound batch of Excalidraw elements before merging/broadcasting.
+ * We treat each element as opaque JSON but REQUIRE the reconcile keys (string
+ * id, finite numeric version) and bound the batch + per-element size so a
+ * malicious client cannot inject huge payloads. Malformed elements are dropped
+ * individually; the surviving ones are returned.
+ */
+function sanitizeElements(raw: unknown): WhiteboardElement[] {
+  if (!Array.isArray(raw)) return [];
+  const out: WhiteboardElement[] = [];
+  for (const item of raw.slice(0, WB_MAX_ELEMENTS_PER_MSG)) {
+    if (!item || typeof item !== "object") continue;
+    const el = item as Partial<WhiteboardElement>;
+    if (typeof el.id !== "string" || el.id.length === 0 || el.id.length > 64) continue;
+    if (typeof el.version !== "number" || !Number.isFinite(el.version)) continue;
+    let size = 0;
+    try {
+      size = JSON.stringify(item).length;
+    } catch {
+      continue; // not serializable (circular / BigInt) — reject
+    }
+    if (size > WB_MAX_ELEMENT_BYTES) continue;
+    out.push(item as WhiteboardElement);
+  }
+  return out;
 }
 
 const EMOTE_SET: ReadonlySet<string> = new Set(EMOTES);

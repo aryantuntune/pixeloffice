@@ -110,6 +110,17 @@ export interface HrAdapter {
    * real-time status source (e.g. the mock) may omit it.
    */
   getStatus?(employeeId: string): Promise<RemoteAttendanceSnapshot | null>;
+
+  /**
+   * Whether the adapter currently holds a usable upstream session for this user
+   * (i.e. attendance swipes/reads would authenticate). Synchronous and
+   * side-effect-free — a pure read of the session store. Used by the status
+   * route to tell the client when an in-place reconnect is needed (the greytHR
+   * ESS session has an absolute TTL and exposes NO refresh endpoint, so a dead
+   * session can only be renewed by re-submitting credentials). Optional:
+   * adapters with no session concept (e.g. the mock) omit it.
+   */
+  isConnected?(userId: string): boolean;
 }
 
 /** Thrown internally by the real adapter; never escapes the attendance service. */

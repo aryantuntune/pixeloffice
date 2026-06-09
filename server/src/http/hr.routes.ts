@@ -127,10 +127,20 @@ export function createHrRouter(deps: HrRouterDeps): Router {
     const email = deps.resolveEmployeeByEmail ? user.email : undefined;
     const view = await deps.attendance.describeStatus(user.userId, email);
     const status: AttendanceStatus = view.status;
+    // greytHR connection signal: computed AFTER describeStatus, because that read
+    // is what detects an expired session (a 401 there drops the dead session).
+    // Only meaningful for greytHR identities (sub === "greythr:<no>"); omitted
+    // for OAuth/dev users so the client never shows a useless reconnect prompt.
+    const greytHrCapable = user.userId.startsWith("greythr:");
+    const connected =
+      greytHrCapable && deps.hr.isConnected ? deps.hr.isConnected(user.userId) : undefined;
     res.json({
       userId: user.userId,
       status,
       lastActionAtMs: view.lastActionAtMs,
+      // When false, the greytHR session expired/was wiped and the widget shows a
+      // one-click "Reconnect" prompt (no logout). Absent for non-greytHR users.
+      ...(typeof connected === "boolean" ? { greythrConnected: connected } : {}),
       // WHEN the user checked in / out, sourced from the attendance service's
       // adapter-recorded timestamps (greytHR's accepted swipe time on the real
       // path; mock clock on dev). Absent when unknown so the widget hides the
