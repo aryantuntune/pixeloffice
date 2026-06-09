@@ -29,7 +29,9 @@ const SECRET = process.env.FLOOR_SYNC_SECRET || "";
 // When set, it is sent as body.pairCode so the server ties this report to YOUR
 // exact session regardless of IP (works behind NAT, a VPN, Docker, or with
 // several browser tabs on one machine — where the IP match alone is ambiguous).
-const PAIR_CODE = (process.env.FLOOR_SYNC_PAIR_CODE || "").trim();
+// Pair code may also be passed as the first CLI arg for convenience, e.g.
+//   npm run companion -- 88P3Q4      (or)   node companion/floor-sync.mjs 88P3Q4
+const PAIR_CODE = (process.argv[2] || process.env.FLOOR_SYNC_PAIR_CODE || "").trim();
 const FAKE_SSID = process.env.FLOOR_SYNC_FAKE_SSID || "";
 const ENDPOINT = SERVER + "/api/location/floor-report";
 

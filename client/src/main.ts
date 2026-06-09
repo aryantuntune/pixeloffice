@@ -82,6 +82,17 @@ const gameRoot = document.getElementById("game-root")!;
 const hudRoot = document.getElementById("hud-root")!;
 const loginRoot = document.getElementById("login-root")!;
 
+// Bottom-left widget stack. The calendar-connect + attendance cards are
+// independently mounted (and self-hide when their integration is absent), but
+// they share the bottom-left corner with the chat input. Anchoring them at fixed
+// `bottom` offsets made them overlap each other when both were visible (their
+// heights vary). Instead we mount both into ONE flex column anchored just above
+// the chat region, so they stack cleanly regardless of height and never collide.
+// Persists across reconnects (a HUD-root sibling, like toasts/banner/admin).
+const bottomLeftStack = document.createElement("div");
+bottomLeftStack.id = "hud-bl-stack";
+hudRoot.appendChild(bottomLeftStack);
+
 const toasts = new Toasts(hudRoot);
 const banner = mountConnectionBanner(hudRoot);
 
@@ -443,28 +454,33 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
     }
   };
 
-  // Attendance widget self-hides if the HR integration is absent (status 404).
-  // Mount once; reusing the instance across reconnects avoids stacking widgets.
-  if (!attendance) {
-    attendance = mountAttendance(hudRoot, {
-      fetchBase: serverHttpBase(),
-      getSessionId: liveSessionId,
-    });
-  } else {
-    void attendance.refresh();
-  }
+  // Bottom-left stack order (top → bottom): "Connect Google Calendar" then the
+  // attendance card, sitting just above the chat input. Both mount into the shared
+  // flex column (#hud-bl-stack) so they stack without overlap and either self-hides
+  // when its integration is absent (the column collapses the empty slot).
 
   // "Connect Google Calendar" widget self-hides if Google is not configured
   // (status 404) — integrations are optional; the office is unaffected. Mount
   // once and refresh on later reconnects (mirrors attendance/admin/settings) so
   // a WELCOME re-seed never stacks duplicate widgets.
   if (!calendarConnect) {
-    calendarConnect = mountCalendarConnect(hudRoot, {
+    calendarConnect = mountCalendarConnect(bottomLeftStack, {
       fetchBase: serverHttpBase(),
       getSessionId: liveSessionId,
     });
   } else {
     void calendarConnect.refresh();
+  }
+
+  // Attendance widget self-hides if the HR integration is absent (status 404).
+  // Mount once; reusing the instance across reconnects avoids stacking widgets.
+  if (!attendance) {
+    attendance = mountAttendance(bottomLeftStack, {
+      fetchBase: serverHttpBase(),
+      getSessionId: liveSessionId,
+    });
+  } else {
+    void attendance.refresh();
   }
 
   // --- Round features: emote bar, profile card, minimap, settings, tour -----

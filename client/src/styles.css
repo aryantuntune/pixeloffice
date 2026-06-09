@@ -1525,14 +1525,44 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+   Bottom-left widget stack (#hud-bl-stack, built in main.ts). Holds the
+   "Connect Google Calendar" card (top) and the attendance card (bottom) in a
+   flex column anchored just above the chat input. Stacking them in one flow
+   column — instead of each self-positioning with a fixed `bottom` offset — keeps
+   them from overlapping each other (their heights vary) and from colliding with
+   the chat region below. Either child self-hides when its integration is absent
+   and the column simply collapses that slot. Click-transparent; its interactive
+   children (the cards themselves) re-enable pointer events.
+   The chat region (.hud-chat) is ~85px tall at bottom:12 → top ~97px; anchor the
+   stack at bottom:104 so it clears the chat with a small gap.
+--------------------------------------------------------------------------- */
+#hud-bl-stack {
+  position: absolute;
+  left: 12px;
+  bottom: 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+#hud-bl-stack .calendar-connect,
+#hud-bl-stack .attendance-widget,
+#hud-bl-stack .attendance-modal-overlay {
+  pointer-events: auto;
+}
+/* A self-hidden card (HR/Google absent) must not leave a gap in the column. */
+#hud-bl-stack > [hidden] {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
    Attendance widget (GreytHR integration; ui/attendance.ts). Reuses
    .hud-panel / .hud-panel-title. Self-hides when HR is absent.
 --------------------------------------------------------------------------- */
 .attendance-widget {
-  /* Compact card pinned above the chat input — never covers the top bar. */
-  position: absolute;
-  left: 12px;
-  bottom: 124px;
+  /* Compact card; flows inside the bottom-left stack (#hud-bl-stack) just above
+     the chat input. The stack owns the corner anchoring + spacing, so this card
+     no longer self-positions (that caused it to overlap the calendar widget). */
   width: 264px;
   display: flex;
   flex-direction: column;
@@ -1911,10 +1941,9 @@ body {
    language so it sits consistently among the other HUD cards.
 --------------------------------------------------------------------------- */
 .calendar-connect {
-  position: absolute;
-  left: 12px;
-  /* Sits just above the attendance widget (which is at bottom: 64px). */
-  bottom: 184px;
+  /* Flows inside the bottom-left stack (#hud-bl-stack), above the attendance
+     card. The stack owns anchoring/spacing — no self-positioning (the old fixed
+     `bottom` offset overlapped the attendance card when both were shown). */
   width: 264px;
   background: linear-gradient(180deg, rgba(26, 33, 43, 0.94), rgba(20, 26, 34, 0.94));
   border: 1px solid var(--border);
