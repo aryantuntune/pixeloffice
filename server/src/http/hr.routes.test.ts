@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { createHrRouter, type SessionUser } from "./hr.routes";
 import { AttendanceService } from "../integrations/hr/attendance.service";
 import { MockGreytHrAdapter } from "../integrations/hr/mock-greythr.adapter";
+import type { AttendanceResult, HrAdapter } from "../integrations/hr/hr-adapter";
 import { JwtService } from "../auth/jwt.service";
 
 function makeApp(deps: Parameters<typeof createHrRouter>[0]): express.Express {
@@ -249,5 +250,81 @@ describe("HR routes — portalUrl surfaced when configured", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { portalUrl?: string };
     expect(body.portalUrl).toBe(PORTAL);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// greythrConnected signal: drives the proactive reconnect banner. Present only
+// for greytHR identities and only when the adapter exposes isConnected().
+// ---------------------------------------------------------------------------
+
+/** Minimal HR adapter that reports a fixed connection state. */
+class FixedConnAdapter implements HrAdapter {
+  constructor(private readonly connected: boolean) {}
+  async lookupEmployee(): Promise<null> {
+    return null;
+  }
+  async syncDepartments(): Promise<[]> {
+    return [];
+  }
+  async checkIn(_id: string, atMs: number): Promise<AttendanceResult> {
+    return { ok: true, recordedAtMs: atMs, status: "CHECKED_IN" };
+  }
+  async checkOut(_id: string, atMs: number): Promise<AttendanceResult> {
+    return { ok: true, recordedAtMs: atMs, status: "CHECKED_OUT" };
+  }
+  isConnected(): boolean {
+    return this.connected;
+  }
+}
+
+describe("HR routes — greythrConnected signal", () => {
+  let server: Server;
+
+  afterEach(() => server?.close());
+
+  async function statusBody(
+    hr: HrAdapter,
+    sessionUser: SessionUser,
+  ): Promise<Record<string, unknown>> {
+    const app = makeApp({
+      attendance: new AttendanceService(hr),
+      hr,
+      resolveSession: () => sessionUser,
+    });
+    let base: string;
+    ({ server, base } = await boot(app));
+    const res = await fetch(`${base}/api/hr/status?sessionId=s`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  const greytHrUser: SessionUser = {
+    userId: "greythr:KCC123",
+    name: "Emp",
+    email: "e@kalvium.com",
+  };
+
+  it("reports greythrConnected:true for a connected greytHR user", async () => {
+    const body = await statusBody(new FixedConnAdapter(true), greytHrUser);
+    expect(body.greythrConnected).toBe(true);
+  });
+
+  it("reports greythrConnected:false when the session is gone", async () => {
+    const body = await statusBody(new FixedConnAdapter(false), greytHrUser);
+    expect(body.greythrConnected).toBe(false);
+  });
+
+  it("omits greythrConnected for a non-greytHR identity", async () => {
+    const body = await statusBody(new FixedConnAdapter(false), {
+      userId: "google:abc",
+      name: "G",
+      email: "g@x.dev",
+    });
+    expect(body).not.toHaveProperty("greythrConnected");
+  });
+
+  it("omits greythrConnected when the adapter has no isConnected (mock)", async () => {
+    const body = await statusBody(new MockGreytHrAdapter(), greytHrUser);
+    expect(body).not.toHaveProperty("greythrConnected");
   });
 });

@@ -286,6 +286,69 @@ function mountGreytHrLoginRoutes(
     }
   });
 
+  // POST /greythr/reconnect: the user is ALREADY in the office (valid PixelOffice
+  // JWT) but the underlying greytHR ESS session has expired (greytHR's own
+  // absolute TTL) or was dropped (server restart wipes the in-memory store).
+  // This re-authenticates ONLY the greytHR session and repopulates the shared
+  // session store the attendance adapter reads — WITHOUT minting a new office
+  // JWT or tearing down the office session. The user stays seated; they re-enter
+  // only their greytHR password (the Employee No is taken from their JWT sub, so
+  // it is never guessed or client-asserted). This stays Constitution-compliant:
+  // identity is server-derived and the action is explicit (user types the
+  // password); PixelOffice still stores no password — only the minted JWT and
+  // the opaque greytHR session.
+  router.post("/greythr/reconnect", async (req: Request, res: Response) => {
+    const token = bearerToken(req);
+    const session = token ? config.jwt.tryVerify(token) : null;
+    if (!session?.sub) {
+      res.status(401).json({ error: "Sign in again to reconnect greytHR." });
+      return;
+    }
+    // Only greytHR identities (sub === "greythr:<employeeNo>") can reconnect; the
+    // Employee No to log in with is derived from the verified token, never the
+    // request body, so a user can only ever reconnect their OWN account.
+    const prefix = "greythr:";
+    if (!session.sub.startsWith(prefix)) {
+      res.status(400).json({ error: "This account does not use greytHR sign-in." });
+      return;
+    }
+    const employeeNo = session.sub.slice(prefix.length);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const password = typeof body.password === "string" ? body.password : "";
+    if (!password) {
+      res.status(400).json({ error: "password is required" });
+      return;
+    }
+    const subdomain =
+      typeof body.subdomain === "string" && body.subdomain.trim()
+        ? body.subdomain.trim()
+        : deps.subdomain || undefined;
+
+    try {
+      const { profile } = await deps.service.loginWithCredentials({
+        subdomain,
+        loginId: employeeNo,
+        password,
+      });
+      // Defense in depth: the freshly authenticated greytHR account MUST resolve
+      // to the same office identity. If it does not (credentials for a different
+      // employee), drop that just-created session and refuse — never link
+      // another account's session to this office identity.
+      if (profile.userId !== session.sub) {
+        await deps.service.logout(profile.userId);
+        res.status(403).json({ error: "Those credentials belong to a different greytHR account." });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      if (err instanceof GreytHrAuthError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      res.status(502).json({ error: "greytHR reconnect failed" });
+    }
+  });
+
   // POST /greythr/logout: end the caller's greytHR session (identity from the
   // JWT). Idempotent — returns ok even without a valid token.
   router.post("/greythr/logout", async (req: Request, res: Response) => {
