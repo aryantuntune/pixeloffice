@@ -70,6 +70,36 @@ function poseDirFor(dir: Direction): SheetDir {
   return dir as SheetDir;
 }
 
+/** Server-side lounge game station ids (see Wire protocol / room handlers). */
+type GameStationId =
+  | "lounge:pool"
+  | "lounge:ping-pong"
+  | "lounge:tic-tac-toe"
+  | "lounge:connect-four";
+
+/**
+ * Maps a playable furniture piece to the lounge game it launches + its [E]
+ * prompt. The prompt names the game on the prop so the affordance is honest
+ * regardless of which floor the furniture sits on.
+ */
+const GAME_STATIONS: Partial<
+  Record<FurnitureKind, { gameId: GameStationId; prompt: string }>
+> = {
+  "pool-table": { gameId: "lounge:pool", prompt: "Press [E] to play Pool" },
+  "ping-pong-table": {
+    gameId: "lounge:ping-pong",
+    prompt: "Press [E] to play Table Tennis",
+  },
+  "arcade-cabinet": {
+    gameId: "lounge:connect-four",
+    prompt: "Press [E] to play Connect Four",
+  },
+  "chess-table": {
+    gameId: "lounge:tic-tac-toe",
+    prompt: "Press [E] to play Tic-Tac-Toe",
+  },
+};
+
 interface Avatar {
   snap: PlayerSnapshot;
   sprite: Phaser.GameObjects.Sprite;
@@ -603,41 +633,40 @@ export class OfficeScene extends Phaser.Scene {
   private checkGameProximity(x: number, y: number): void {
     if (!this.cb.onInteractPrompt) return;
 
-    // Lounge games physically live only on the ground floor (per the multi-floor
-    // contract). On any other floor these tiles are ordinary, so skip the prompts.
-    if (this.floorId === "ground") {
-      // Ping Pong: x: 38..40, y: 21..22
-      if (x >= 37 && x <= 41 && y >= 20 && y <= 23) {
-        this.currentPromptGameId = "lounge:ping-pong";
-        this.cb.onInteractPrompt("Press [E] to play Table Tennis", this.currentPromptGameId);
-        return;
-      }
-
-      // Pool table footprint x:43..45, y:21..22 → prompt on the surrounding ring.
-      if (x >= 42 && x <= 46 && y >= 20 && y <= 23) {
-        this.currentPromptGameId = "lounge:pool";
-        this.cb.onInteractPrompt("Press [E] to play Pool", this.currentPromptGameId);
-        return;
-      }
-
-      // Arcade Cabinet: x: 35, y: 15
-      if (Math.abs(x - 35) <= 1 && Math.abs(y - 15) <= 1) {
-        this.currentPromptGameId = "lounge:connect-four";
-        this.cb.onInteractPrompt("Press [E] to play Connect Four", this.currentPromptGameId);
-        return;
-      }
-
-      // Chess Table: x: 45, y: 15
-      if (Math.abs(x - 45) <= 1 && Math.abs(y - 15) <= 1) {
-        this.currentPromptGameId = "lounge:tic-tac-toe";
-        this.cb.onInteractPrompt("Press [E] to play Tic-Tac-Toe", this.currentPromptGameId);
-        return;
-      }
+    // Derive game stations from the active floor's furniture rather than
+    // hardcoding a floor id + coordinates. This keeps the [E] prompts in sync
+    // with wherever the lounge furniture actually lives (it sits on the rich
+    // main-office floor, not the ground floor), and survives map edits.
+    const station = this.gameStationNear(x, y);
+    if (station) {
+      this.currentPromptGameId = station.gameId;
+      this.cb.onInteractPrompt(station.prompt, station.gameId);
+      return;
     }
 
     this.currentPromptGameId = undefined;
     this.currentPortalLabel = null;
     this.cb.onInteractPrompt(null);
+  }
+
+  /**
+   * If (x,y) is on or adjacent to a playable game furniture piece on the
+   * current floor, return its station id + prompt text; otherwise undefined.
+   * Adjacency is checked against the piece's full footprint (w×h), so multi-tile
+   * tables (pool/ping-pong) prompt from the ring of tiles around them.
+   */
+  private gameStationNear(
+    x: number,
+    y: number,
+  ): { gameId: GameStationId; prompt: string } | undefined {
+    for (const f of this.map.furniture) {
+      const station = GAME_STATIONS[f.kind as FurnitureKind];
+      if (!station) continue;
+      const nearX = x >= f.x - 1 && x <= f.x + f.w;
+      const nearY = y >= f.y - 1 && y <= f.y + f.h;
+      if (nearX && nearY) return station;
+    }
+    return undefined;
   }
 
   private tileOccupied(x: number, y: number): boolean {

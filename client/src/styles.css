@@ -578,6 +578,33 @@ body {
   max-height: calc(100vh - 64px - 264px);
 }
 
+/* Narrow-viewport drawer toggle. Hidden on desktop; the @media block below
+   reveals it and turns the sidebar into an off-canvas drawer. */
+.hud-sidebar-toggle {
+  position: absolute;
+  top: 64px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(26, 33, 43, 0.96), rgba(20, 26, 34, 0.96));
+  color: var(--text);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  z-index: 26;
+}
+.hud-sidebar-toggle:hover {
+  border-color: var(--accent-2);
+}
+
 /* One consistent panel recipe: radius / border / blur / soft top-light. */
 .hud-panel {
   background: linear-gradient(180deg, rgba(26, 33, 43, 0.94), rgba(20, 26, 34, 0.94));
@@ -597,6 +624,45 @@ body {
 
 .hud-meetings {
   flex: 0 0 auto;
+}
+
+.hud-games-launcher {
+  flex: 0 0 auto;
+}
+/* 2x2 grid of game launch buttons — a robust secondary entry to the lounge
+   games (the primary is the walk-up [E] prompt). */
+.hud-games-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  overflow: visible;
+}
+.hud-game-launch-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-3, rgba(255, 255, 255, 0.04));
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s var(--ease);
+}
+.hud-game-launch-btn:hover {
+  border-color: var(--accent-2);
+  background: rgba(46, 111, 216, 0.14);
+}
+.hud-game-launch-btn:active {
+  transform: scale(0.97);
+}
+.hud-game-emoji {
+  font-size: 15px;
+  line-height: 1;
 }
 
 .hud-panel-title {
@@ -1223,7 +1289,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 60;
+  /* Sit ABOVE the first-join onboarding overlay (z-index:65) so its dimmer +
+     callout never cover or intercept clicks on the admin form fields — a
+     first-time admin hasn't dismissed the tour yet. */
+  z-index: 70;
   animation: fade-in 0.18s ease both;
 }
 
@@ -2491,6 +2560,41 @@ body {
   .hud-sidebar {
     top: 108px;
     max-height: calc(100vh - 134px);
+  }
+}
+
+/* Phone / narrow widths: the fixed 264px sidebar would cover the canvas, the
+   top-left controls and the bottom-left chat. Turn it into a right-docked
+   off-canvas drawer that slides fully off-screen when collapsed (the default,
+   set in hud.ts), revealing the toggle FAB so the play area + chat stay clear.
+   The sidebar caps its width so it never spans the whole viewport. */
+@media (max-width: 620px) {
+  .hud-sidebar-toggle {
+    display: flex;
+  }
+  .hud-sidebar {
+    top: 108px;
+    width: min(280px, 86vw);
+    max-height: calc(100vh - 134px - 12px);
+    /* Sit above the toggle/canvas while open; the FAB lives just left of it. */
+    z-index: 25;
+    transition: transform 0.25s var(--ease), opacity 0.2s ease;
+    /* The boot slide-right animation uses fill-mode `both`, whose end frame
+       (transform:none; opacity:1) would otherwise win over the collapsed
+       transform below. Disable it here so the drawer state controls position. */
+    animation: none !important;
+  }
+  /* Collapsed: slide off the right edge and disable interaction so taps fall
+     through to the game/chat beneath. */
+  .hud-sidebar.collapsed {
+    transform: translateX(calc(100% + 24px));
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* When the drawer is open, nudge its FAB to the drawer's left edge so it
+     stays tappable as a close affordance instead of hiding behind the panel. */
+  .hud-sidebar:not(.collapsed) ~ .hud-sidebar-toggle {
+    right: calc(min(280px, 86vw) + 8px);
   }
 }
 

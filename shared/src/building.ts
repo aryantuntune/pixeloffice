@@ -128,8 +128,17 @@ export const SPAWN_FLOOR_ID = FLOOR_2_ID;
  */
 export const MAIN_OFFICE_FLOOR_ID = FLOOR_2_ID;
 
-/** Elevator tile on the rich main office (Floor 2), near reception, going DOWN. */
-const MAIN_OFFICE_ELEVATOR: TilePos = { x: 44, y: 31 };
+/**
+ * Elevator tile on the rich main office (Floor 2), going DOWN to Floor 1.
+ *
+ * Placed center-bottom in Reception, right beside the default spawn (31,31) —
+ * mirroring every OTHER floor (Floor 1 at (23,27)/(25,27), Ground at (24,18)),
+ * which put their elevator near the landing/spawn. The previous corner spot
+ * (44,31), tucked against the right/bottom walls, was ~30+ tiles from spawn and
+ * effectively undiscoverable for a brand-new user (the floor every user starts
+ * on). (34,31) is a walkable Reception tile a few steps from spawn.
+ */
+const MAIN_OFFICE_ELEVATOR: TilePos = { x: 34, y: 31 };
 
 let cachedBuilding: Building | null = null;
 

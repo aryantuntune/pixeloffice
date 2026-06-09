@@ -308,7 +308,57 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   eventsBody.className = "hud-panel-body";
   eventsPanel.append(eventsTitle, eventsBody);
 
-  sidebar.append(rosterPanel, meetingsPanel, eventsPanel);
+  // --- Lounge games launcher -----------------------------------------------
+  // A robust SECONDARY entry point to the lounge games (the PRIMARY one is the
+  // walk-up [E] prompt). It sends the same JOIN_GAME the prompt does, so a
+  // single proximity/coordinate regression can never make the games
+  // unreachable. The server seats the player regardless of avatar position;
+  // pool opens its vs-friend / vs-Bot chooser exactly like a walk-up join.
+  const gamesPanel = document.createElement("div");
+  gamesPanel.className = "hud-panel hud-games-launcher";
+  const gamesTitle = document.createElement("h2");
+  gamesTitle.className = "hud-panel-title";
+  gamesTitle.textContent = "Lounge games";
+  const gamesBody = document.createElement("div");
+  gamesBody.className = "hud-panel-body hud-games-grid";
+  const LOUNGE_GAMES: { gameId: string; label: string; emoji: string }[] = [
+    { gameId: "lounge:pool", label: "Pool", emoji: "🎱" },
+    { gameId: "lounge:ping-pong", label: "Table Tennis", emoji: "🏓" },
+    { gameId: "lounge:connect-four", label: "Connect Four", emoji: "🔴" },
+    { gameId: "lounge:tic-tac-toe", label: "Tic-Tac-Toe", emoji: "⭕" },
+  ];
+  for (const g of LOUNGE_GAMES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "hud-game-launch-btn";
+    b.innerHTML = `<span class="hud-game-emoji">${g.emoji}</span><span>${g.label}</span>`;
+    b.title = `Play ${g.label}`;
+    b.addEventListener("click", () => cb.onJoinGame?.(g.gameId, "group"));
+    gamesBody.appendChild(b);
+  }
+  gamesPanel.append(gamesTitle, gamesBody);
+
+  sidebar.append(rosterPanel, meetingsPanel, gamesPanel, eventsPanel);
+
+  // --- Narrow-viewport sidebar drawer toggle -------------------------------
+  // On phone/narrow widths the fixed 264px sidebar would cover the canvas, the
+  // top-left controls and the chat bar. There, CSS turns the sidebar into an
+  // off-canvas drawer that defaults to collapsed; this FAB (shown only at narrow
+  // widths via CSS) slides it in/out so the play area + chat stay usable. The
+  // button is harmless/hidden on desktop. No business logic — pure UI affordance.
+  const sidebarToggle = document.createElement("button");
+  sidebarToggle.type = "button";
+  sidebarToggle.className = "hud-sidebar-toggle";
+  sidebarToggle.setAttribute("aria-controls", "hud-sidebar");
+  sidebarToggle.setAttribute("aria-expanded", "false");
+  sidebarToggle.setAttribute("aria-label", "Toggle team & events panel");
+  sidebarToggle.textContent = "👥";
+  sidebar.id = "hud-sidebar";
+  sidebar.classList.add("collapsed");
+  sidebarToggle.addEventListener("click", () => {
+    const open = sidebar.classList.toggle("collapsed") === false;
+    sidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
 
   // --- Bottom-left chat ----------------------------------------------------
   const chatBar = document.createElement("div");
@@ -336,7 +386,7 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   chatInput.addEventListener("blur", () => cb.onChatFocus?.(false));
   chatBar.appendChild(chatInput);
 
-  layer.append(topBar, sidebar, chatBar);
+  layer.append(topBar, sidebar, sidebarToggle, chatBar);
 
   // --- Rendering helpers ---------------------------------------------------
 

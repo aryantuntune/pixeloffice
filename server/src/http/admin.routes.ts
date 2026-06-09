@@ -12,6 +12,8 @@ import {
   S2C,
   areaAt,
   buildOfficeMap,
+  floorById,
+  type Floor,
   type SocialEventType,
   type ToastPayload,
 } from "@pixeloffice/shared";
@@ -60,8 +62,29 @@ export function createAdminRouter(): Router {
       res.json({ users: [] });
       return;
     }
+    // Resolve each player's area against THEIR OWN floor map — not a single
+    // hard-coded floor. A player at (24,19) on the ground floor and one at
+    // (24,19) on Floor 2 sit in different rooms; using one map for everyone
+    // mislabels every off-floor player and all ground-floor NPCs. The active
+    // building owns every floor's geometry (the room joined the same building).
+    const building = container.maps.getActiveBuilding();
+    // The default floor id the room uses when a snapshot omits floorId.
+    const defaultFloorId = building.floors[0]?.id ?? "ground";
+    const floorCache = new Map<string, Floor | null>();
+    const resolveFloor = (id: string): Floor | null => {
+      const cached = floorCache.get(id);
+      if (cached !== undefined) return cached;
+      const floor = floorById(building, id);
+      floorCache.set(id, floor);
+      return floor;
+    };
+
     const users = room.listPlayers().map((p) => {
-      const area = areaAt(map, p.x, p.y);
+      const floorId = p.floorId ?? defaultFloorId;
+      // A Floor IS an OfficeMap, so areaAt works on it directly. Fall back to
+      // the legacy single map only if the floor cannot be resolved.
+      const floor = resolveFloor(floorId);
+      const area = areaAt(floor ?? map, p.x, p.y);
       return {
         sessionId: p.sessionId,
         userId: p.userId,
@@ -73,6 +96,10 @@ export function createAdminRouter(): Router {
         presence: p.presence,
         source: p.source,
         area: area ? area.name : "Hallway",
+        // Per-player floor so an admin can disambiguate same-coordinate players
+        // on different floors. Additive fields (backward-compatible).
+        floorId,
+        floor: floor ? floor.name : floorId,
         // Surface ambient NPCs so admin tooling can distinguish them from real
         // users. Omitted (not false) for humans to keep the shape minimal and
         // backward-compatible.
