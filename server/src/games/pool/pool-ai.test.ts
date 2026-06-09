@@ -7,10 +7,14 @@ import { POOL_TABLE_W, POOL_TABLE_H, type PoolBall, type PoolState } from "@pixe
 import { pickShot } from "./pool-ai";
 import { freshPoolState, kindForId } from "./pool-setup";
 import { applyShot } from "./pool-physics";
+import { resolveShot } from "./pool-rules";
 import { makePrng } from "./prng";
 
 const AI = "AI";
 const HUMAN = "human";
+
+/** Centered PRNG => the AI's CHOSEN shot, free of difficulty aim noise. */
+const noNoise = () => 0.5;
 
 function ball(id: number, x: number, y: number): PoolBall {
   return { id, kind: kindForId(id), x, y, vx: 0, vy: 0, pocketed: false };
@@ -78,6 +82,110 @@ describe("pickShot: legality + bounds", () => {
     const shot = pickShot(state, AI, "easy", makePrng(9));
     expect(Number.isFinite(shot.angleRad)).toBe(true);
     expect(shot.power).toBeGreaterThan(0);
+  });
+
+  it("power is always clamped into the sane [0.25, 1] range", () => {
+    const state = freshPoolState(AI);
+    for (let seed = 0; seed < 12; seed++) {
+      const shot = pickShot(state, AI, "easy", makePrng(seed));
+      expect(shot.power).toBeGreaterThanOrEqual(0.25);
+      expect(shot.power).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legality: the CHOSEN shot (no aim noise) must be a LEGAL, non-scratch shot
+// whenever such a shot exists. The AI simulates candidates and scores them, so
+// it should never knowingly scratch, never play a no-contact shot, and never hit
+// the wrong group first when a clean line exists.
+// ---------------------------------------------------------------------------
+describe("pickShot: simulation-driven legality (no aim noise)", () => {
+  it("does not scratch when a clean own-group pot is available", () => {
+    // Cue, an own solid lined up with the right-edge pocket, no obstructions.
+    const balls: PoolBall[] = [
+      ball(0, 40, 50),
+      ball(2, 120, 50), // own solid, in line toward the right-middle... use corner
+      ball(11, 160, 20), // opponent stripe out of the way
+    ];
+    const state: PoolState = {
+      balls,
+      currentTurn: AI,
+      assignedGroups: { [AI]: "solid", [HUMAN]: "stripe" },
+      ballInHand: false,
+      lastEvent: null,
+      animating: false,
+    };
+    const shot = pickShot(state, AI, "hard", noNoise);
+    const sim = applyShot(state.balls, shot.angleRad, shot.power);
+    expect(sim.cueScratched).toBe(false);
+    expect(sim.firstContactId).not.toBeNull();
+    // First contact must be a SOLID (the AI's group), never the stripe.
+    expect(kindForId(sim.firstContactId!)).toBe("solid");
+  });
+
+  it("hits its own group first (not the opponent's) once assigned", () => {
+    const balls: PoolBall[] = [
+      ball(0, 40, 50),
+      ball(3, 100, 50), // own solid dead ahead
+      ball(12, 100, 70), // stripe nearby — easy to wrongly clip
+    ];
+    const state: PoolState = {
+      balls,
+      currentTurn: AI,
+      assignedGroups: { [AI]: "solid", [HUMAN]: "stripe" },
+      ballInHand: false,
+      lastEvent: null,
+      animating: false,
+    };
+    const shot = pickShot(state, AI, "hard", noNoise);
+    const sim = applyShot(state.balls, shot.angleRad, shot.power);
+    expect(sim.firstContactId).not.toBeNull();
+    expect(kindForId(sim.firstContactId!)).toBe("solid");
+    expect(sim.cueScratched).toBe(false);
+  });
+
+  it("the chosen shot on the opening rack is a legal, non-scratch break", () => {
+    const state = freshPoolState(AI);
+    const shot = pickShot(state, AI, "hard", noNoise);
+    const sim = applyShot(state.balls, shot.angleRad, shot.power);
+    const res = resolveShot(
+      { ...state, balls: state.balls.map((b) => ({ ...b })) },
+      AI,
+      HUMAN,
+      sim,
+    );
+    expect(sim.cueScratched).toBe(false);
+    expect(sim.firstContactId).not.toBeNull();
+    expect(res.event.foul).toBe(false);
+  });
+
+  it("plays AI vs AI to a winner and the chosen shots never scratch/miss-contact", () => {
+    let state = freshPoolState(AI);
+    const P1 = AI, P2 = "AI2";
+    state.currentTurn = P1;
+    let finished = false;
+    for (let turn = 0; turn < 300; turn++) {
+      const shooter = state.currentTurn;
+      const opp = shooter === P1 ? P2 : P1;
+      const shot = pickShot(state, shooter, "hard", noNoise);
+      const sim = applyShot(state.balls, shot.angleRad, shot.power);
+      expect(sim.cueScratched).toBe(false);
+      expect(sim.firstContactId).not.toBeNull();
+      const res = resolveShot(
+        { ...state, balls: state.balls.map((b) => ({ ...b })) },
+        shooter,
+        opp,
+        sim,
+      );
+      state = res.state;
+      if (state.ballInHand) {
+        const c = state.balls.find((b) => b.id === 0);
+        if (c && c.pocketed) { c.pocketed = false; c.x = 50; c.y = 50; c.vx = 0; c.vy = 0; }
+      }
+      if (res.winnerSessionId !== undefined) { finished = true; break; }
+    }
+    expect(finished).toBe(true); // never stalls; always reaches a winner
   });
 });
 

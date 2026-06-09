@@ -499,6 +499,11 @@ function mountPoolView(
   let respot: { x: number; y: number } | null = null;
   let draggingCue = false;
 
+  // True between clicking "Play again" and the server's fresh GAME_UPDATE landing.
+  // Keeps the game-over banner hidden so the overlay never sticks on the terminal
+  // screen while we wait for the re-racked table.
+  let rematchPending = false;
+
   function selfId(): string {
     return store.get().selfId;
   }
@@ -982,7 +987,7 @@ function mountPoolView(
   }
 
   function renderOver() {
-    if (!game || game.status !== "gameover") {
+    if (!game || game.status !== "gameover" || rematchPending) {
       overBanner.style.display = "none";
       return;
     }
@@ -1013,11 +1018,35 @@ function mountPoolView(
         : game.winnerSessionId && game.winnerSessionId !== me && !isSeated()
         ? ""
         : "";
+
+    const actions = document.createElement("div");
+    actions.className = "pool-over-actions";
+
+    // Rematch / Play again — only seated players can re-rack (per the rematch
+    // contract). The server resets the rack with the SAME seats and broadcasts a
+    // fresh GAME_UPDATE (status "playing"), which `update` renders as a live table.
+    if (isSeated()) {
+      const again = document.createElement("button");
+      again.className = "game-over-btn primary";
+      again.textContent = "Play again";
+      again.addEventListener("click", () => {
+        if (!game) return;
+        // Optimistically clear the local terminal view so we never get stuck on
+        // the game-over screen; the authoritative fresh state arrives next tick.
+        rematchPending = true;
+        overBanner.style.display = "none";
+        callbacks.onGameInput(game.id, { rematch: true });
+      });
+      actions.appendChild(again);
+    }
+
     const btn = document.createElement("button");
     btn.className = "game-over-btn";
     btn.textContent = "Return to Office";
     btn.addEventListener("click", leave);
-    overBanner.append(h, reason, btn);
+    actions.appendChild(btn);
+
+    overBanner.append(h, reason, actions);
   }
 
   function syncPowerMeter() {
@@ -1055,6 +1084,9 @@ function mountPoolView(
   function update(next: ActiveGame) {
     game = next;
     const s = poolState();
+    // Once the server delivers a non-terminal state, the rematch has landed —
+    // drop the pending guard so future game-overs render normally.
+    if (next.status !== "gameover") rematchPending = false;
     // Detect a new shot trajectory (server sends it once per resolved shot).
     if (s?.trajectory && s.trajectory !== lastTrajectoryRef && s.trajectory.length > 1) {
       lastTrajectoryRef = s.trajectory;

@@ -77,7 +77,11 @@ import {
   resolveShot,
   pickShot,
   makePrng,
+  joinPool,
+  leavePool,
+  rematchPool,
   type PoolDifficulty,
+  type PoolLifecycleResult,
 } from "../games/pool";
 import { container } from "../container";
 import { createLogger } from "../logging/logger";
@@ -1392,34 +1396,23 @@ export class OfficeRoom extends Room {
     gamePlayer: GamePlayer,
     mode: "ai" | "group" | undefined,
   ): void {
-    if (!game.player1) {
-      game.player1 = gamePlayer;
-      this.lockForGame(client.sessionId);
-      if (mode === "ai") {
-        game.vsAi = true;
-        game.player2 = { sessionId: POOL_AI_SESSION_ID, name: "Pool Bot", avatarId: "slate" };
-        game.status = "playing";
-        this.resetGameState(game);
-      } else {
-        game.vsAi = false;
-        game.status = "waiting";
-      }
-    } else if (!game.player2 && !game.vsAi) {
-      game.player2 = gamePlayer;
-      this.lockForGame(client.sessionId);
-      game.status = "playing";
-      this.resetGameState(game);
-    } else {
-      // Spectator: no seat. Push them the current state so they can watch.
-      const c = this.clientFor(client.sessionId);
-      if (c) c.send(S2C.GAME_UPDATE, { game });
-      return;
+    const result = joinPool(game, gamePlayer, mode);
+    this.applyPoolLifecycle(game, result);
+    // player1 always breaks, so the AI never needs scheduling at join time.
+  }
+
+  /** Apply a framework-free pool lifecycle decision: presence locks + broadcast. */
+  private applyPoolLifecycle(game: ActiveGame, result: PoolLifecycleResult): void {
+    for (const sid of result.lock) this.lockForGame(sid);
+    for (const sid of result.unlock) {
+      container.presence.setManual(sid, "AVAILABLE");
+      container.presence.tick(Date.now());
     }
-
-    this.broadcast(S2C.GAME_UPDATE, { game });
-
-    // If the AI happens to break (it is player1's opponent and player1 always
-    // breaks here), no scheduling is needed — player1/human breaks first.
+    if (result.spectator) {
+      const c = this.clientFor(result.spectator);
+      if (c) c.send(S2C.GAME_UPDATE, { game });
+    }
+    if (result.broadcast) this.broadcast(S2C.GAME_UPDATE, { game });
   }
 
   /** Set a human to FOCUS for the duration of a game (locks ambient walking UI). */
@@ -1620,10 +1613,20 @@ export class OfficeRoom extends Room {
     const gameId = payload?.gameId;
     if (typeof gameId !== "string") return;
     const game = this.games.get(gameId);
-    if (!game || game.status !== "playing") return;
+    if (!game) return;
 
     const input = payload?.input;
     if (!input) return;
+
+    // Rematch / "Play again": valid AFTER a pool game is over. Handled before the
+    // "must be playing" gate so a finished table is never left locked. A seated
+    // player resets the rack with the SAME seats and re-breaks.
+    if (game.type === "pool" && input.rematch === true) {
+      this.handlePoolRematch(client.sessionId, game);
+      return;
+    }
+
+    if (game.status !== "playing") return;
 
     if (game.type === "pool") {
       this.handlePoolShot(client.sessionId, game, input);
@@ -1809,61 +1812,44 @@ export class OfficeRoom extends Room {
    *   - resets the table to idle once empty so the station frees up.
    */
   private leavePool(game: ActiveGame, sessionId: string): void {
-    let removed = false;
-    let wasPlayer1 = false;
-    if (game.player1?.sessionId === sessionId) {
-      game.player1 = null;
-      removed = true;
-      wasPlayer1 = true;
-    } else if (game.player2?.sessionId === sessionId) {
-      game.player2 = null;
-      removed = true;
-    }
-    if (!removed) return; // spectator left — nothing to free
-
-    container.presence.setManual(sessionId, "AVAILABLE");
-    container.presence.tick(Date.now());
-
-    // Cancel a pending AI shot for this table.
+    // Cancel a pending AI shot for this table before mutating seats.
     const timer = this.poolAiTimers.get(game.id);
     if (timer) {
       timer.clear();
       this.poolAiTimers.delete(game.id);
     }
 
-    if (game.status === "playing") {
-      if (game.vsAi) {
-        // The lone human left a solo game: drop the AI seat and reset the table.
-        game.player1 = null;
-        game.player2 = null;
-        game.vsAi = false;
-        game.status = "idle";
-        game.state = null;
-        game.winnerSessionId = null;
-      } else {
-        // Two-human game in progress: the remaining human wins by forfeit.
-        const remaining = wasPlayer1 ? game.player2 : game.player1;
-        if (remaining) {
-          game.winnerSessionId = remaining.sessionId;
-          game.status = "gameover";
-        } else {
-          game.status = "idle";
-          game.state = null;
-        }
-      }
-    } else {
-      // waiting / gameover: collapse to idle when empty, else keep the lone seat.
-      if (!game.player1 && !game.player2) {
-        game.status = "idle";
-        game.state = null;
-        game.vsAi = false;
-        game.winnerSessionId = null;
-      } else {
-        game.status = "waiting";
-      }
+    const result = leavePool(game, sessionId);
+    this.applyPoolLifecycle(game, result);
+  }
+
+  /**
+   * Rematch / "Play again". Valid only when the pool game is OVER and the
+   * requester occupies a real seat (spectators and the AI cannot trigger it). The
+   * SAME seats are kept (human-vs-AI or the two humans), the rack is reset, player1
+   * re-breaks, status returns to "playing", and a fresh GAME_UPDATE is broadcast.
+   * The table is never left in a terminal/locked state.
+   */
+  private handlePoolRematch(sessionId: string, game: ActiveGame): void {
+    if (game.type !== "pool") return;
+
+    // Cancel any stale AI timer before (potentially) re-racking.
+    const t = this.poolAiTimers.get(game.id);
+    if (t) {
+      t.clear();
+      this.poolAiTimers.delete(game.id);
     }
 
-    this.broadcast(S2C.GAME_UPDATE, { game });
+    const result = rematchPool(game, sessionId);
+    if (!result.broadcast) return; // not allowed (not over / not seated / no opponent)
+    this.applyPoolLifecycle(game, result);
+
+    // If (somehow) the AI is to break, schedule it. With player1 always breaking
+    // and the AI in seat 2, this is a no-op in practice.
+    const st = game.state as PoolState | null;
+    if (game.vsAi && st && st.currentTurn === POOL_AI_SESSION_ID) {
+      this.scheduleAiPoolTurn(game);
+    }
   }
 
   /** Schedule the AI's pool shot after a brief, animation-friendly delay. */
