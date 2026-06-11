@@ -1,78 +1,13 @@
-# ---------------------------------------------------------------------------
-# PixelOffice — local infrastructure (plan Layer 4 + Infrastructure).
-#
-# `docker compose up` starts ONLY Postgres + Redis (the datastores the optional
-# persistence layer connects to). The app itself stays zero-config: point the
-# server at these via env to opt into persistence, e.g.
-#
-#   DATABASE_URL=postgres://pixeloffice:pixeloffice@localhost:5432/pixeloffice \
-#   REDIS_URL=redis://localhost:6379 \
-#   npm run dev
-#
-# The optional `app` service lives under the "app" profile so it does NOT start
-# by default and the file stays valid even before the Dockerfile lands. It
-# requires a Dockerfile at the repo root (written by the infra builder). Run the
-# full stack with:  docker compose --profile app up --build
-# ---------------------------------------------------------------------------
-
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: pixeloffice-postgres
-    environment:
-      POSTGRES_DB: pixeloffice
-      POSTGRES_USER: pixeloffice
-      POSTGRES_PASSWORD: pixeloffice
-    ports:
-      - "5432:5432"
-    volumes:
-      - pixeloffice-pgdata:/var/lib/postgresql/data
-      # Bootstrap schema on first init (idempotent; also run by the app on boot).
-      - ./server/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pixeloffice -d pixeloffice"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    container_name: pixeloffice-redis
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - pixeloffice-redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # OPTIONAL application service. Requires ./Dockerfile (written by the infra
-  # builder). Under the "app" profile so plain `docker compose up` starts only
-  # the datastores above.
   app:
-    profiles: ["app"]
-    build: . # requires a Dockerfile at the repo root
+    image: djdiptayan/pixeloffice:latest
+    pull_policy: always
     container_name: pixeloffice-app
-    # Ensure SIGTERM reaches the node process on `docker compose down`/stop so the
-    # graceful shutdown drain runs. The image already uses tini as ENTRYPOINT;
-    # this is belt-and-suspenders for the compose path.
     init: true
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgres://pixeloffice:pixeloffice@postgres:5432/pixeloffice
-      REDIS_URL: redis://redis:6379
-      AUTO_MIGRATE: "true"
       PORT: "2567"
     ports:
       - "2567:2567"
-
-volumes:
-  pixeloffice-pgdata:
-  pixeloffice-redisdata:

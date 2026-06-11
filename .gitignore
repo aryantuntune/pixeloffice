@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 *.log
+docs/private/
 
 # macOS Finder metadata
 .DS_Store
