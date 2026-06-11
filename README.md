@@ -265,13 +265,108 @@ event via REST → join event → teleport + `BREAK` → schedule meeting → `M
 ### Docker
 
 ```bash
-docker build -t pixeloffice .
-docker run --rm -p 2567:2567 pixeloffice            # open http://localhost:2567
-docker compose --profile app up --build             # app + postgres + redis
+docker build --platform linux/amd64 -t djdiptayan/pixeloffice:latest .
+docker push djdiptayan/pixeloffice:latest
+docker compose pull
+docker compose up -d
 ```
 
 The image builds the client, serves it from Express (`SERVE_CLIENT=true`), runs as the
 unprivileged `node` user, exposes `2567`, and has a `HEALTHCHECK` on `/api/health`.
+
+### Google Cloud VM deploy
+
+Production runs as one Docker container from Docker Hub:
+`djdiptayan/pixeloffice:latest`. The container serves the frontend, REST API, and
+WebSocket server from port `2567`. On the VM, bind that port to localhost only and let
+Caddy expose the public HTTPS domain.
+
+Example VM files:
+
+```text
+~/pixeloffice.env
+~/start-pixeloffice.sh
+```
+
+`~/start-pixeloffice.sh`:
+
+```bash
+#!/bin/bash
+
+set -e
+
+IMAGE="djdiptayan/pixeloffice:latest"
+CONTAINER_NAME="pixeloffice"
+
+echo "Pulling latest image..."
+docker pull $IMAGE
+
+echo "Stopping existing container (if any)..."
+docker stop $CONTAINER_NAME 2>/dev/null || true
+docker rm $CONTAINER_NAME 2>/dev/null || true
+
+echo "Starting new container..."
+docker run -d \
+  --name $CONTAINER_NAME \
+  --restart unless-stopped \
+  --env-file pixeloffice.env \
+  -p 127.0.0.1:2567:2567 \
+  $IMAGE
+
+echo "Container restarted successfully."
+```
+
+The VM startup metadata runs this script after reboot, so the app should come back
+without a manual SSH session. Startup logs are written to:
+
+```bash
+sudo tail -n 100 /var/log/pixeloffice-startup.log
+```
+
+Useful VM commands:
+
+```bash
+./start-pixeloffice.sh
+docker logs -f pixeloffice
+docker ps
+curl http://127.0.0.1:2567/api/health
+```
+
+### Caddy and Cloudflare
+
+Public traffic enters through Cloudflare and Caddy:
+
+```text
+https://pixeloffice.app -> Caddy :443 -> 127.0.0.1:2567 -> PixelOffice container
+```
+
+Edit Caddy on the VM:
+
+```bash
+cd /etc/caddy
+sudo nano Caddyfile
+sudo caddy fmt --overwrite /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Current Caddyfile:
+
+```caddyfile
+pixeloffice.app {
+	tls internal
+	reverse_proxy 127.0.0.1:2567
+}
+
+www.pixeloffice.app {
+	tls internal
+	redir https://pixeloffice.app{uri} permanent
+}
+```
+
+Cloudflare DNS should point `pixeloffice.app` to the VM external IP. With `tls internal`
+on the origin, Cloudflare SSL/TLS mode should be **Full**. Keep VM firewall exposure to
+SSH plus `80`/`443`; do not expose raw `2567` publicly.
 
 ### CI
 

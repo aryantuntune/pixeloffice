@@ -1,39 +1,9 @@
-# Caddyfile — HTTPS reverse proxy for PixelOffice (single origin)
-# ---------------------------------------------------------------------------
-# WHY: browsers only expose mic/camera (navigator.mediaDevices.getUserMedia)
-# in a SECURE CONTEXT — HTTPS, or localhost. Over http://<lan-ip> it is
-# `undefined`, so proximity voice/video calls cannot work. Caddy terminates
-# TLS in front of the office so every LAN teammate gets a secure origin.
-#
-# TOPOLOGY: single origin. Run the Node server with SERVE_CLIENT=true so it
-# serves the BUILT client + /api + the Colyseus WebSocket on :2567. The client
-# detects it is same-origin (not on Vite's 5173/4173) and dials wss:// on the
-# SAME host — see client/src/net/connection.ts. Caddy proxies all of it
-# (WebSocket upgrades are handled automatically).
-#
-# RUN (clean URL on :443, needs sudo on macOS to bind a low port):
-#     npm run build                       # build client -> client/dist
-#     SERVE_CLIENT=true npm run -w server start   # Node on :2567
-#     sudo caddy run --config Caddyfile   # HTTPS in front
-#   Teammates open:  https://172.16.1.41
-#
-# RUN (no sudo, high port):
-#     PIXELOFFICE_HOST=172.16.1.41:8443 caddy run --config Caddyfile
-#   Teammates open:  https://172.16.1.41:8443
-#
-# NOTE: `tls internal` uses Caddy's local CA (no public domain needed). The
-# FIRST time a teammate opens the URL they'll see a one-time "not private"
-# warning — click through ("Proceed"). After that the origin is a secure
-# context and calls work. To remove the warning entirely, have teammates trust
-# this machine's Caddy root CA (`caddy trust` installs it locally on the host).
-# ---------------------------------------------------------------------------
+pixeloffice.app {
+  	tls internal
+  	reverse_proxy 127.0.0.1:2567
+  }
 
-# Address teammates open. Defaults to this machine's current LAN IP; override
-# with the PIXELOFFICE_HOST env var (optionally include a :port).
-https://{$PIXELOFFICE_HOST:172.16.1.41} {
-	# Local self-signed cert from Caddy's internal CA — no public domain needed.
-	tls internal
-
-	# Single backend: the Node server serving client + API + WebSocket.
-	reverse_proxy localhost:2567
-}
+  www.pixeloffice.app {
+  	tls internal
+  	redir https://pixeloffice.app{uri} permanent
+  }
