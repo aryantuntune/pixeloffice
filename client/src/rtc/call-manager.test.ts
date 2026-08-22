@@ -108,4 +108,28 @@ describe("CallManager", () => {
     expect(ended).toEqual([]);
     expect(active).toContainEqual({ peerId: "b", kind: "audio" });
   });
+
+  it("handles video call with correct getUserMedia constraints", async () => {
+    const manager = new CallManager({
+      selfId: () => "a",
+      sendSignal: vi.fn(),
+      events: {
+        onRemoteStream: vi.fn(),
+        onLocalStream: vi.fn(),
+        onCallEnded: vi.fn(),
+        onCallActive: vi.fn(),
+        onMicState: vi.fn(),
+        onError: vi.fn(),
+      },
+    });
+
+    const getUserMediaSpy = vi.spyOn(navigator.mediaDevices, "getUserMedia");
+
+    await manager.startCall("c", "video");
+
+    expect(getUserMediaSpy).toHaveBeenCalledWith({
+      audio: true,
+      video: true,
+    });
+  });
 });
