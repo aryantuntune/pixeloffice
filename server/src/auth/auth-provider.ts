@@ -21,6 +21,8 @@ export interface AuthenticatedUser {
   name: string;
   department: Department;
   avatarId: AvatarId;
+  /** Verified account email when the IdP provides one. Server-side only. */
+  email?: string;
 }
 
 /**

@@ -71,7 +71,7 @@ export class JwtAuthProvider implements AuthProvider {
           ? claims.department
           : this.opts.defaultDepartment;
       const avatarId = isAvatarId(o.avatarId) ? o.avatarId : AVATAR_IDS[0];
-      return { userId: claims.sub, name, department, avatarId };
+      return { userId: claims.sub, name, department, avatarId, email: claims.email };
     }
 
     if (this.opts.authRequired) {

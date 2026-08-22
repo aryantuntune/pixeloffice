@@ -493,17 +493,20 @@ export function createLogin(opts: LoginOptions): LoginHandle {
     const hasGreytHr = !!(config && config.greythr && config.greythr.enabled);
 
     if (hasGreytHr) {
-      // greytHR is the sole sign-in: show only the avatar picker + Employee No /
-      // Password; the avatar sits above the Sign in button.
+      // greytHR is the only office sign-in because attendance and HR services
+      // are bound to that identity. Google/Microsoft OAuth is used inside the
+      // office for optional Workspace/calendar sync, not for entering.
       greytHrSubdomain = config!.greythr!.subdomain ?? "";
       greytHrArea.insertBefore(avatarBlock, gtSubmit);
       greytHrArea.hidden = false;
       activeErrorLine = gtError;
-      footer.textContent = "Sign in with your greytHR account";
-      // Remove the guest form + divider (.login-form's display:flex overrides
-      // [hidden], so .hidden alone won't hide it).
-      form.remove();
+      footer.textContent = hasOAuth
+        ? "Google Workspace sync is available inside the office."
+        : "Sign in with your greytHR account";
       divider.remove();
+      // Remove the guest form (.login-form's display:flex overrides [hidden],
+      // so .hidden alone won't hide it).
+      form.remove();
       gtIdInput.focus();
       return;
     }

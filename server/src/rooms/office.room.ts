@@ -554,6 +554,7 @@ export class OfficeRoom extends Room {
       name: identity.name,
       department: identity.department,
       avatarId: identity.avatarId,
+      ...(identity.email ? { email: identity.email } : {}),
     });
 
     // New joiners spawn on the rich MAIN OFFICE floor (Floor 2) at a free desk

@@ -28,7 +28,12 @@ export interface CalendarAdapter {
 
 export interface CreateMeetingInput {
   title: string;
-  startsInMinutes: number;
+  /**
+   * Absolute meeting start time (epoch ms). Preferred for real scheduling.
+   * `startsInMinutes` remains for backward-compatible local/dev callers.
+   */
+  startTime?: number;
+  startsInMinutes?: number;
   durationMinutes: number;
   /** Optional office meeting room override for admin-scheduled mock meetings. */
   roomName?: string;

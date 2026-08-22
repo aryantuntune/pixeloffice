@@ -9,8 +9,9 @@ Every nontrivial claim is sourced inline like `[1]`; see Sources at the bottom.
   kalvium.com Workspace org). Internal apps **skip Google verification entirely** even for
   sensitive/restricted scopes, have no 100-user cap, no unverified-app screen, and no 7-day
   refresh-token expiry `[1][2]`.
-- Request exactly one calendar scope: **`calendar.events.readonly`** (least privilege that still
-  returns event titles, start/end, attendees, `transparency`, and the Meet link) `[3][4]`.
+- Request **`calendar.events.readonly`** for presence/Meet links and
+  **`calendar.events.owned`** when users create meetings from PixelOffice. The write scope is
+  limited to events on calendars the user owns `[3][4]`.
 - Implement a **`GoogleCalendarAdapter`** behind the existing `CalendarAdapter` interface; it is a
   drop-in env-gated swap at `server/src/container.ts` (mirrors the GreytHR pattern already there).
 - **Poll with `events.list` + `syncToken`** (incremental sync). Push channels (`events.watch`)
@@ -26,7 +27,8 @@ Every nontrivial claim is sourced inline like `[1]`; see Sources at the bottom.
    (`server/src/auth/auth-provider.ts`) → JWT session.
 2. **"Connect Google Calendar"** (new HUD action in `client/src/ui/hud.ts`) triggers an
    **incremental** second authorization-code request to the same endpoint
-   `https://accounts.google.com/o/oauth2/v2/auth` with `scope=…/calendar.events.readonly`,
+   `https://accounts.google.com/o/oauth2/v2/auth` with
+   `scope=…/calendar.events.readonly …/calendar.events.owned`,
    `include_granted_scopes=true`, `access_type=offline`, `prompt=consent`. `include_granted_scopes`
    keeps the sign-in scopes on the new token `[9]`; `access_type=offline` + `prompt=consent`
    guarantees a **refresh token** `[9][2]`.
@@ -49,9 +51,10 @@ Every nontrivial claim is sourced inline like `[1]`; see Sources at the bottom.
 |---|---|---|
 | `openid email profile` | sign-in (already used) | non-sensitive |
 | `https://www.googleapis.com/auth/calendar.events.readonly` | read events incl. title, start/end, attendees, `transparency`, `hangoutLink`/`conferenceData` | sensitive (see note) `[3][4][10]` |
+| `https://www.googleapis.com/auth/calendar.events.owned` | create PixelOffice meetings on the organizer's owned calendar and attach a unique Google Meet conference | sensitive `[3][4]` |
 
-Do NOT request `calendar.readonly` (broader: adds calendar-list/ACL), the read/write
-`calendar`/`calendar.events`, any Meet scope (`meetings.space.*`), or Drive scopes — none are
+Do NOT request `calendar.readonly` (broader: adds calendar-list/ACL), the full
+`calendar` scope, any Meet scope (`meetings.space.*`), or Drive scopes — none are
 needed; the Meet link lives on the calendar event `[7]`. `freebusy`-only scopes can't return titles
 or Meet links, so they're a degraded fallback only `[3]`.
 
@@ -73,7 +76,7 @@ treatment only if the app ever goes External.
 5. **Admin Console → Security → Access and data control → API controls** `[11]`. If the org blocks
    unconfigured third-party apps, OAuth fails with HTTP 400 `admin_policy_enforced` until the app is
    allowlisted. Admin: *Add app → by OAuth Client ID →* grant **"Specific Google data"** limited to
-   `calendar.events.readonly` (least privilege), or tick **Trust internal apps**. Include the
+  `calendar.events.readonly` and `calendar.events.owned`, or tick **Trust internal apps**. Include the
    sign-in scopes when configuring "Specific Google data" or sign-in can break `[11]`.
 6. No **Marketplace listing** and no **domain-wide delegation** are required — per-user OAuth with
    user consent is the correct, Google-recommended path for a present user `[12][13]`.
@@ -131,8 +134,8 @@ must degrade gracefully (integrations optional). **Never iframe Meet** (X-Frame-
 - **Title reading is optional.** Offer a per-user toggle: if off, drive `IN_MEETING` from busy
   blocks only (store/display "In a meeting", not the title). The narrowest minimal-permission mode
   is `freebusy` (busy/free only, no titles/links), available as a degraded fallback `[3]`.
-- Google **Chat presence is not exposed** to third parties — presence stays derived internally,
-  never scraped `[18]`.
+- Google **Chat presence/status writes are not exposed** to third parties — presence stays derived
+  internally from PixelOffice and Calendar, never scraped or spoofed `[18]`.
 
 ## Implementation checklist (ordered)
 

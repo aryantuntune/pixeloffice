@@ -32,6 +32,7 @@ import { GoogleCalendarAdapter } from "./integrations/calendar/google-calendar.a
 import { CompositeCalendarAdapter } from "./integrations/calendar/composite-calendar.adapter";
 import {
   InMemoryGoogleTokenStore,
+  RedisGoogleTokenStore,
   type GoogleTokenStore,
 } from "./auth/google-token.store";
 import { EventService } from "./events/event.service";
@@ -86,7 +87,13 @@ const googleCalConfigured =
   Boolean(process.env.GOOGLE_CLIENT_ID?.trim()) &&
   Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim());
 
-const googleTokenStore: GoogleTokenStore = new InMemoryGoogleTokenStore();
+let activeGoogleTokenStore: GoogleTokenStore = new InMemoryGoogleTokenStore();
+const googleTokenStore: GoogleTokenStore = {
+  save: (userId, record) => activeGoogleTokenStore.save(userId, record),
+  get: (userId) => activeGoogleTokenStore.get(userId),
+  delete: (userId) => activeGoogleTokenStore.delete(userId),
+  connectedUserIds: () => activeGoogleTokenStore.connectedUserIds(),
+};
 
 const googleCalendar: GoogleCalendarAdapter | null = googleCalConfigured
   ? new GoogleCalendarAdapter(
@@ -322,10 +329,6 @@ export async function initContainer(
   if (initialized) return;
   initialized = true;
 
-  // Start the Google Calendar background poll loop (no-op when unconfigured).
-  // The adapter owns its own interval; the room tick stays untouched.
-  googleCalendar?.start();
-
   const userResult = await createUserRepository(env);
   users = userResult.repository;
   database = userResult.database;
@@ -333,4 +336,15 @@ export async function initContainer(
   const presenceStoreResult = await createPresenceStore(env);
   presenceStore = presenceStoreResult.store;
   redis = presenceStoreResult.redis;
+
+  if (redis) {
+    activeGoogleTokenStore = new RedisGoogleTokenStore(
+      redis,
+      env.GOOGLE_TOKEN_ENC_KEY ?? env.JWT_SECRET,
+    );
+  }
+
+  // Start the Google Calendar background poll loop after persistence is selected
+  // so connected grants survive restarts when Redis is configured.
+  googleCalendar?.start();
 }

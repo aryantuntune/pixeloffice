@@ -82,6 +82,39 @@ function applyFloorToSession(
   return out;
 }
 
+function applyRemoteReport(
+  sessions: Session[],
+  clientIp: string | undefined,
+): Outcome {
+  const out: Outcome = { matched: 0, floors: {}, places: {} };
+  for (const s of sessions) out.floors[s.sessionId] = s.floorId;
+  for (const s of sessions) out.places[s.sessionId] = undefined;
+
+  if (!clientIp) return out;
+  for (const s of sessions) {
+    if (s.ip !== clientIp) continue;
+    if (s.optedIn !== true) continue;
+    if (s.isNpc) continue;
+    out.places[s.sessionId] = "REMOTE";
+    out.matched += 1;
+  }
+  return out;
+}
+
+function applyRemoteToSession(sessions: Session[], sessionId: string): Outcome {
+  const out: Outcome = { matched: 0, floors: {}, places: {} };
+  for (const s of sessions) out.floors[s.sessionId] = s.floorId;
+  for (const s of sessions) out.places[s.sessionId] = undefined;
+
+  const s = sessions.find((x) => x.sessionId === sessionId);
+  if (!s) return out;
+  if (s.optedIn !== true) return out;
+  if (s.isNpc) return out;
+  out.places[s.sessionId] = "REMOTE";
+  out.matched += 1;
+  return out;
+}
+
 const FLOORS = new Set(["ground", "floor-1", "floor-2"]);
 
 describe("applyFloorReport gate", () => {
@@ -168,6 +201,26 @@ describe("applyFloorReport gate", () => {
     expect(r.matched).toBe(0);
     expect(r.floors.mine).toBe("floor-2"); // never moved
     expect(r.places.mine).toBeUndefined();
+  });
+
+  it("marks an opted-in matching-IP session REMOTE for a non-office SSID", () => {
+    const r = applyRemoteReport(
+      [{ sessionId: "mine", ip: "10.0.0.5", optedIn: true, floorId: "floor-2" }],
+      "10.0.0.5",
+    );
+    expect(r.matched).toBe(1);
+    expect(r.floors.mine).toBe("floor-2"); // remote tag never auto-moves
+    expect(r.places.mine).toBe("REMOTE");
+  });
+
+  it("marks a pair-code session REMOTE for a non-office SSID regardless of IP", () => {
+    const r = applyRemoteToSession(
+      [{ sessionId: "mine", ip: "172.17.0.9", optedIn: true, floorId: "floor-1" }],
+      "mine",
+    );
+    expect(r.matched).toBe(1);
+    expect(r.floors.mine).toBe("floor-1");
+    expect(r.places.mine).toBe("REMOTE");
   });
 
   it("is a no-op for an unknown floor id or absent IP", () => {

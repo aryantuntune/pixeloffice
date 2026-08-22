@@ -19,6 +19,8 @@
 // product displays (no-surveillance constitution).
 // ---------------------------------------------------------------------------
 
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+
 /** The persisted record for one connected user's calendar grant. */
 export interface GoogleTokenRecord {
   /** Long-lived OAuth refresh token (offline grant). The only required field. */
@@ -67,5 +69,131 @@ export class InMemoryGoogleTokenStore implements GoogleTokenStore {
 
   connectedUserIds(): string[] {
     return [...this.records.keys()];
+  }
+}
+
+interface TokenCodec {
+  encode(record: GoogleTokenRecord): string;
+  decode(raw: string): GoogleTokenRecord | null;
+}
+
+class JsonTokenCodec implements TokenCodec {
+  encode(record: GoogleTokenRecord): string {
+    return JSON.stringify(record);
+  }
+
+  decode(raw: string): GoogleTokenRecord | null {
+    return parseTokenRecord(raw);
+  }
+}
+
+class AesGcmTokenCodec implements TokenCodec {
+  private readonly key: Buffer;
+
+  constructor(secret: string) {
+    this.key = createHash("sha256").update(secret).digest();
+  }
+
+  encode(record: GoogleTokenRecord): string {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", this.key, iv);
+    const encrypted = Buffer.concat([
+      cipher.update(JSON.stringify(record), "utf8"),
+      cipher.final(),
+    ]);
+    const tag = cipher.getAuthTag();
+    return `v1:${Buffer.concat([iv, tag, encrypted]).toString("base64")}`;
+  }
+
+  decode(raw: string): GoogleTokenRecord | null {
+    if (!raw.startsWith("v1:")) return parseTokenRecord(raw);
+    try {
+      const buf = Buffer.from(raw.slice(3), "base64");
+      const iv = buf.subarray(0, 12);
+      const tag = buf.subarray(12, 28);
+      const encrypted = buf.subarray(28);
+      const decipher = createDecipheriv("aes-256-gcm", this.key, iv);
+      decipher.setAuthTag(tag);
+      const plain = Buffer.concat([
+        decipher.update(encrypted),
+        decipher.final(),
+      ]).toString("utf8");
+      return parseTokenRecord(plain);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function parseTokenRecord(raw: string): GoogleTokenRecord | null {
+  try {
+    const parsed = JSON.parse(raw) as GoogleTokenRecord;
+    if (typeof parsed.refreshToken !== "string" || parsed.refreshToken.length === 0) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+interface RedisLikeGoogleTokenStore {
+  client: {
+    set(key: string, value: string): Promise<unknown>;
+    get(key: string): Promise<string | null>;
+    del(key: string): Promise<unknown>;
+    sadd(key: string, value: string): Promise<unknown>;
+    srem(key: string, value: string): Promise<unknown>;
+    smembers(key: string): Promise<string[]>;
+  };
+}
+
+const REDIS_CONNECTED_USERS_KEY = "pixeloffice:google-calendar:users";
+const REDIS_TOKEN_PREFIX = "pixeloffice:google-calendar:token:";
+
+function tokenKey(userId: string): string {
+  return `${REDIS_TOKEN_PREFIX}${Buffer.from(userId, "utf8").toString("base64url")}`;
+}
+
+/**
+ * Redis-backed token store. Used when REDIS_URL is healthy so Google Calendar
+ * sync survives server restarts while the zero-config path remains in-memory.
+ */
+export class RedisGoogleTokenStore implements GoogleTokenStore {
+  private readonly codec: TokenCodec;
+
+  constructor(
+    private readonly redis: RedisLikeGoogleTokenStore,
+    encryptionSecret?: string,
+  ) {
+    this.codec = encryptionSecret?.trim()
+      ? new AesGcmTokenCodec(encryptionSecret.trim())
+      : new JsonTokenCodec();
+  }
+
+  async save(userId: string, record: GoogleTokenRecord): Promise<void> {
+    await this.redis.client.set(
+      tokenKey(userId),
+      this.codec.encode({
+        ...record,
+        connectedAtMs: record.connectedAtMs ?? Date.now(),
+      }),
+    );
+    await this.redis.client.sadd(REDIS_CONNECTED_USERS_KEY, userId);
+  }
+
+  async get(userId: string): Promise<GoogleTokenRecord | null> {
+    const raw = await this.redis.client.get(tokenKey(userId));
+    if (!raw) return null;
+    return this.codec.decode(raw);
+  }
+
+  async delete(userId: string): Promise<void> {
+    await this.redis.client.del(tokenKey(userId));
+    await this.redis.client.srem(REDIS_CONNECTED_USERS_KEY, userId);
+  }
+
+  async connectedUserIds(): Promise<string[]> {
+    return this.redis.client.smembers(REDIS_CONNECTED_USERS_KEY);
   }
 }

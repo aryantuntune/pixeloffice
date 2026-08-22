@@ -2,7 +2,7 @@
 // _SUBDOMAIN / _LOGIN_TIMEOUT_MS). Disabled unless GREYTHR_LOGIN_ENABLED=true.
 
 const DEFAULT_CLIENT_URL = "http://localhost:3000";
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 120000;
 
 export interface GreytHrLoginConfig {
   /** Base URL of the greytHR ESS client service. */

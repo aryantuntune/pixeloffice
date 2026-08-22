@@ -80,7 +80,7 @@ describe("Google Calendar connect routes", () => {
     }
   });
 
-  it("connect 302s to Google consent with offline+consent+readonly scope", async () => {
+  it("connect 302s to Google consent with offline+consent+read/write-owned event scopes", async () => {
     let base: string;
     ({ server, base } = await boot({}));
     const res = await fetch(`${base}/api/auth/google/calendar/connect?sessionId=S1`, {
@@ -93,6 +93,7 @@ describe("Google Calendar connect routes", () => {
     expect(loc).toContain("prompt=consent");
     expect(loc).toContain("include_granted_scopes=true");
     expect(loc).toContain(encodeURIComponent("https://www.googleapis.com/auth/calendar.events.readonly"));
+    expect(loc).toContain(encodeURIComponent("https://www.googleapis.com/auth/calendar.events.owned"));
     expect(loc).toContain("state=");
   });
 

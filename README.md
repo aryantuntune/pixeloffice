@@ -183,13 +183,18 @@ auth routes 404 and the dev card is shown.
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `GOOGLE_MEETING_ROOM_EMAILS` | _(unset)_ | Optional room resource mapping for Google room booking, e.g. `Meeting Room A=room-a@example.com,Meeting Room B=room-b@example.com`. |
+| `GOOGLE_TOKEN_ENC_KEY` | `JWT_SECRET` fallback | Optional stable secret used to encrypt Redis-stored Google refresh tokens. |
 | `GOOGLE_CAL_TITLES` | `true` | When `false`, hides meeting titles (busy/free privacy mode). |
 | `GOOGLE_CAL_POLL_MS` | `45000` | Per-user poll interval for incremental calendar sync. |
 | `GOOGLE_AUTH_BASE` / `GOOGLE_TOKEN_BASE` / `GOOGLE_API_BASE` | Google APIs | Endpoint overrides to point at a local stub for offline tests. |
 
 Reuses the Google OAuth client. Users click **Connect Google Calendar** in the HUD to
-grant `calendar.events.readonly` (incremental offline grant); refresh tokens are stored
-server-side. Register the extra redirect URI
+grant `calendar.events.readonly` plus `calendar.events.owned` (incremental offline
+grant). Refresh tokens are stored server-side: Redis when `REDIS_URL` is healthy,
+otherwise in-memory for zero-config dev. Read access drives presence and Meet links;
+owned-event write access lets a signed-in user create Meet-backed events from
+PixelOffice. Register the extra redirect URI
 `${OAUTH_REDIRECT_BASE}/api/auth/google/calendar/callback`. See
 [docs/google-workspace-integration.md](docs/google-workspace-integration.md).
 
@@ -205,17 +210,17 @@ keeps only the JWT it mints.
 | `GREYTHR_LOGIN_ENABLED` | `false` | When `true`, swaps the dev login card for greytHR sign-in (forces `AUTH_REQUIRED`). |
 | `GREYTHR_CLIENT_URL` | `http://localhost:3000` | Base URL of the self-hosted greytHR ESS API service. |
 | `GREYTHR_SUBDOMAIN` | _(empty)_ | Company subdomain prefilled + forwarded (e.g. `kalvium`). |
-| `GREYTHR_LOGIN_TIMEOUT_MS` | `8000` | Timeout for the greytHR login proxy request. |
+| `GREYTHR_LOGIN_TIMEOUT_MS` | `120000` | Timeout for the greytHR login proxy request. |
 | `GREYTHR_PORTAL_URL` | ESS home (when set) | User-facing "Open greytHR ↗" deep link in the attendance widget. |
 
-### Persistence (Postgres + Redis)
+### Persistence (optional)
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | _(unset)_ | Postgres user storage. Down → warn + in-memory fallback. |
 | `AUTO_MIGRATE` | `true` (when DB set) | Run `server/db/init.sql` on boot (idempotent). |
 | `DATABASE_SSL` | `require` | Postgres TLS mode: `require`, `no-verify`, or `disable`. |
-| `REDIS_URL` | _(unset)_ | Redis presence storage (latest state/source/timestamp only). Down → warn + in-memory. |
+| `REDIS_URL` | _(unset)_ | Redis storage for latest presence plus Google Calendar refresh-token grants. Down → warn + in-memory. |
 
 ```bash
 docker compose up                # starts ONLY postgres + redis

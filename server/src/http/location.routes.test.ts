@@ -27,15 +27,27 @@ async function boot(app: express.Express): Promise<{ server: Server; base: strin
 function fakeRoom(matched: number, floorIds = ["ground", "floor-1", "floor-2"]) {
   const calls: Array<{ clientIp: string | undefined; floorId: string }> = [];
   const sessionCalls: Array<{ sessionId: string; floorId: string }> = [];
+  const remoteCalls: Array<{ clientIp: string | undefined }> = [];
+  const remoteSessionCalls: Array<{ sessionId: string }> = [];
   return {
     calls,
     sessionCalls,
+    remoteCalls,
+    remoteSessionCalls,
     applyFloorReport(clientIp: string | undefined, floorId: string): number {
       calls.push({ clientIp, floorId });
       return matched;
     },
     applyFloorReportBySession(sessionId: string, floorId: string): number {
       sessionCalls.push({ sessionId, floorId });
+      return matched;
+    },
+    applyRemoteReport(clientIp: string | undefined): number {
+      remoteCalls.push({ clientIp });
+      return matched;
+    },
+    applyRemoteReportBySession(sessionId: string): number {
+      remoteSessionCalls.push({ sessionId });
       return matched;
     },
     floorIds(): string[] {
@@ -66,14 +78,15 @@ describe("POST /api/location/floor-report", () => {
 
   const resolver = createSsidFloorResolver(undefined, ["ground", "floor-1", "floor-2"]);
 
-  it("no-ops on an unknown SSID (200 { floorId: null, matched: 0 })", async () => {
+  it("marks the opted-in caller REMOTE on an unknown SSID", async () => {
     const room = fakeRoom(1);
     const { server: s, base } = await boot(makeApp({ getRoom: () => room, resolver }));
     server = s;
     const r = await post(base, { ssid: "RandomCafeWiFi" });
     expect(r.status).toBe(200);
-    expect(r.json).toEqual({ floorId: null, matched: 0 });
-    expect(room.calls).toHaveLength(0); // never reached the room
+    expect(r.json).toEqual({ floorId: null, matched: 1, place: "REMOTE" });
+    expect(room.calls).toHaveLength(0);
+    expect(room.remoteCalls).toHaveLength(1);
   });
 
   it("rejects a missing/empty ssid with 400", async () => {
@@ -181,6 +194,21 @@ describe("POST /api/location/floor-report", () => {
       // Fell through to the IP path (no session call).
       expect(room.sessionCalls).toHaveLength(0);
       expect(room.calls).toHaveLength(1);
+    });
+
+    it("a valid pairCode on an unknown SSID marks THAT session REMOTE", async () => {
+      const room = fakeRoom(1);
+      const pairCodes = new PairCodeStore();
+      const code = pairCodes.mint("sess-1", "user-1", Date.now());
+      const { server: s, base } = await boot(
+        makeApp({ getRoom: () => room, resolver, pairCodes }),
+      );
+      server = s;
+      const r = await post(base, { ssid: "HomeWifi", pairCode: code });
+      expect(r.status).toBe(200);
+      expect(r.json).toEqual({ floorId: null, matched: 1, place: "REMOTE" });
+      expect(room.remoteSessionCalls).toEqual([{ sessionId: "sess-1" }]);
+      expect(room.remoteCalls).toHaveLength(0);
     });
 
     it("still enforces the secret when set, even with a valid pairCode", async () => {

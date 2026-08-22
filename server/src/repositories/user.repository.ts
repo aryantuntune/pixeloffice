@@ -13,6 +13,8 @@ export interface StoredUser {
   name: string;
   department: Department;
   avatarId: AvatarId;
+  /** Verified OAuth/SSO email when available. Kept server-side for integrations. */
+  email?: string;
 }
 
 export interface UserRepository {

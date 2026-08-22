@@ -158,6 +158,32 @@ export function createAdmin(parent: HTMLElement): void {
     return el;
   }
 
+  function toDateInputValue(date: Date): string {
+    const offsetMs = date.getTimezoneOffset() * 60_000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10);
+  }
+
+  function toTimeInputValue(date: Date): string {
+    const offsetMs = date.getTimezoneOffset() * 60_000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(11, 16);
+  }
+
+  function defaultMeetingStart(): Date {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + 5);
+    d.setSeconds(0, 0);
+    return d;
+  }
+
+  function dateTimeFromInputs(dateValue: string, timeValue: string): Date | null {
+    if (!dateValue || !timeValue) return null;
+    const [year, month, day] = dateValue.split("-").map(Number);
+    const [hour, minute] = timeValue.split(":").map(Number);
+    if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+    const d = new Date(year, month - 1, day, hour, minute, 0, 0);
+    return Number.isFinite(d.getTime()) ? d : null;
+  }
+
   async function post(path: string, body: unknown, status: HTMLElement, okMsg: string): Promise<void> {
     status.className = "admin-status";
     status.textContent = "Sending…";
@@ -255,10 +281,38 @@ export function createAdmin(parent: HTMLElement): void {
     titleInput.placeholder = "Meeting title";
     titleInput.maxLength = 60;
 
-    const startsInput = document.createElement("input");
-    startsInput.type = "number";
-    startsInput.min = "0";
-    startsInput.value = "1";
+    const defaultStart = defaultMeetingStart();
+    const dateInput = document.createElement("input");
+    dateInput.type = "date";
+    dateInput.value = toDateInputValue(defaultStart);
+    dateInput.min = toDateInputValue(new Date());
+
+    const timeInput = document.createElement("input");
+    timeInput.type = "time";
+    timeInput.step = "300";
+    timeInput.value = toTimeInputValue(defaultStart);
+
+    const dateTimeWrap = document.createElement("div");
+    dateTimeWrap.className = "admin-datetime-picker";
+    const quickWrap = document.createElement("div");
+    quickWrap.className = "admin-date-quick";
+    const todayBtn = quickDateButton("Today", 0);
+    const tomorrowBtn = quickDateButton("Tomorrow", 1);
+    quickWrap.append(todayBtn, tomorrowBtn);
+    dateTimeWrap.append(dateInput, timeInput, quickWrap);
+
+    function quickDateButton(label: string, addDays: number): HTMLButtonElement {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "admin-date-chip";
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        const d = new Date();
+        d.setDate(d.getDate() + addDays);
+        dateInput.value = toDateInputValue(d);
+      });
+      return btn;
+    }
 
     const durationInput = document.createElement("input");
     durationInput.type = "number";
@@ -358,7 +412,7 @@ export function createAdmin(parent: HTMLElement): void {
 
     form.append(
       field("Title", titleInput),
-      field("Starts in (minutes)", startsInput),
+      field("Date and time", dateTimeWrap),
       field("Duration (minutes)", durationInput),
       field("Meeting room", roomSel),
       allLabel,
@@ -376,9 +430,15 @@ export function createAdmin(parent: HTMLElement): void {
         status.textContent = "Pick at least one person, or check “Invite all participants”.";
         return;
       }
+      const selectedStart = dateTimeFromInputs(dateInput.value, timeInput.value);
+      if (!selectedStart) {
+        status.className = "admin-status error";
+        status.textContent = "Pick a valid meeting date and time.";
+        return;
+      }
       const body = {
         title: titleInput.value.trim() || "Team Meeting",
-        startsInMinutes: Number(startsInput.value),
+        startTime: selectedStart.toISOString(),
         durationMinutes: Number(durationInput.value),
         roomName: roomSel.value,
         participantIds,

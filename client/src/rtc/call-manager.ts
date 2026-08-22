@@ -23,6 +23,7 @@ import type { RtcCallKind } from "@pixeloffice/shared";
  *  with zero infrastructure (Constitution: never break zero-config dev). Cross
  *  symmetric-NAT may fail without a TURN server, which can be added later. */
 const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+const DISCONNECT_GRACE_MS = 5_000;
 
 export interface CallManagerEvents {
   /** A remote media stream arrived for a peer (attach to a <video>/<audio>). */
@@ -47,6 +48,8 @@ interface PeerCall {
   /** Queued remote ICE candidates that arrived before the remote description. */
   pendingCandidates: RTCIceCandidateInit[];
   haveRemoteDescription: boolean;
+  disconnectTimer: ReturnType<typeof setTimeout> | null;
+  activeEmitted: boolean;
 }
 
 export interface CallManagerDeps {
@@ -85,7 +88,6 @@ export class CallManager {
         await call.pc.setLocalDescription(offer);
         this.deps.sendSignal(peerId, { sdp: call.pc.localDescription });
       }
-      this.deps.events.onCallActive(peerId, kind);
     } catch (err) {
       this.deps.events.onError(peerId, mediaError(err));
       this.endCall(peerId);
@@ -110,7 +112,6 @@ export class CallManager {
           const answer = await call.pc.createAnswer();
           await call.pc.setLocalDescription(answer);
           this.deps.sendSignal(peerId, { sdp: call.pc.localDescription });
-          this.deps.events.onCallActive(peerId, call.kind);
         }
       } else if (blob.candidate) {
         const call = this.calls.get(peerId);
@@ -147,6 +148,7 @@ export class CallManager {
     const call = this.calls.get(peerId);
     if (!call) return;
     this.calls.delete(peerId);
+    if (call.disconnectTimer) clearTimeout(call.disconnectTimer);
     for (const track of call.local?.getTracks() ?? []) track.stop();
     try {
       call.pc.onicecandidate = null;
@@ -205,13 +207,18 @@ export class CallManager {
       remote,
       pendingCandidates: [],
       haveRemoteDescription: false,
+      disconnectTimer: null,
+      activeEmitted: false,
     };
     this.calls.set(peerId, call);
 
     for (const track of local.getTracks()) pc.addTrack(track, local);
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) this.deps.sendSignal(peerId, { candidate: e.candidate.toJSON() });
+      if (e.candidate) {
+        const candidate = (typeof e.candidate.toJSON === "function") ? e.candidate.toJSON() : JSON.parse(JSON.stringify(e.candidate));
+        this.deps.sendSignal(peerId, { candidate });
+      }
     };
     pc.ontrack = (e) => {
       for (const track of e.streams[0]?.getTracks() ?? [e.track]) remote.addTrack(track);
@@ -219,7 +226,27 @@ export class CallManager {
     };
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
-      if (s === "failed" || s === "closed" || s === "disconnected") this.endCall(peerId);
+      if (s === "connected") {
+        if (call.disconnectTimer) {
+          clearTimeout(call.disconnectTimer);
+          call.disconnectTimer = null;
+        }
+        if (!call.activeEmitted) {
+          call.activeEmitted = true;
+          this.deps.events.onCallActive(peerId, call.kind);
+        }
+        return;
+      }
+      if (s === "disconnected") {
+        if (call.disconnectTimer) return;
+        call.disconnectTimer = setTimeout(() => {
+          if (this.calls.get(peerId) === call && call.pc.connectionState === "disconnected") {
+            this.endCall(peerId);
+          }
+        }, DISCONNECT_GRACE_MS);
+        return;
+      }
+      if (s === "failed" || s === "closed") this.endCall(peerId);
     };
 
     this.deps.events.onLocalStream(peerId, local, kind);
@@ -232,8 +259,8 @@ export class CallManager {
     for (const c of queued) {
       try {
         await call.pc.addIceCandidate(c);
-      } catch {
-        /* ignore a stale candidate */
+      } catch (err) {
+        // Non-fatal: stale or invalid candidate during negotiation.
       }
     }
   }

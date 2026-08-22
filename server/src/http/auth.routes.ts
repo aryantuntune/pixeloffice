@@ -30,6 +30,7 @@ import {
   GreytHrAuthError,
   type GreytHrAuthService,
 } from "../auth/greythr/greythr-auth.service";
+import { createLogger } from "../logging/logger";
 
 /**
  * Optional Google Calendar connect deps. Present ONLY when GOOGLE_CLIENT_ID +
@@ -102,7 +103,12 @@ function avatarForSubject(subject: string): AvatarId {
   return AVATAR_IDS[hash % AVATAR_IDS.length];
 }
 
-const CAL_SCOPE = "https://www.googleapis.com/auth/calendar.events.readonly";
+const CAL_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events.readonly",
+  "https://www.googleapis.com/auth/calendar.events.owned",
+] as const;
+
+const log = createLogger("http:auth");
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
   const router = Router();
@@ -279,9 +285,18 @@ function mountGreytHrLoginRoutes(
       res.json({ token, profile });
     } catch (err) {
       if (err instanceof GreytHrAuthError) {
+        log.warn("greytHR login failed", {
+          status: err.status,
+          message: err.message,
+          subdomain: subdomain ?? "",
+          loginIdLength: loginId.length,
+        });
         res.status(err.status).json({ error: err.message });
         return;
       }
+      log.warn("greytHR login failed unexpectedly", {
+        error: err instanceof Error ? err.name : typeof err,
+      });
       res.status(502).json({ error: "greytHR sign-in failed" });
     }
   });
@@ -403,7 +418,7 @@ function mountGoogleCalendarRoutes(
       client_id: gc.clientId,
       redirect_uri: redirectUri,
       response_type: "code",
-      scope: CAL_SCOPE,
+      scope: CAL_SCOPES.join(" "),
       state,
       access_type: "offline",
       prompt: "consent",

@@ -77,11 +77,17 @@ export class MockCalendarAdapter implements CalendarAdapter {
     if (!(input.durationMinutes > 0)) {
       throw new Error("durationMinutes must be greater than 0");
     }
-    if (!(input.startsInMinutes >= 0)) {
-      throw new Error("startsInMinutes must be >= 0");
+    const hasAbsoluteStart = typeof input.startTime === "number";
+    if (!hasAbsoluteStart && !(typeof input.startsInMinutes === "number" && input.startsInMinutes >= 0)) {
+      throw new Error("startTime or startsInMinutes must be provided");
     }
     const participantIds = Array.isArray(input.participantIds) ? [...input.participantIds] : [];
-    const startTime = nowMs + Math.round(input.startsInMinutes * 60_000);
+    const startTime = hasAbsoluteStart
+      ? Math.round(input.startTime!)
+      : nowMs + Math.round(input.startsInMinutes! * 60_000);
+    if (startTime < nowMs) {
+      throw new Error("startTime must not be in the past");
+    }
     const endTime = startTime + Math.round(input.durationMinutes * 60_000);
     const meeting: MeetingInfo = {
       id: `meeting_${Date.now()}_${meetingSeq++}`,

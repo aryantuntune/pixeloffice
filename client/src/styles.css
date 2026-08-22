@@ -2369,6 +2369,39 @@ body:not(.office-route) #login-root {
   box-shadow: 0 0 0 3px rgba(46, 111, 216, 0.18);
 }
 
+.admin-datetime-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-datetime-picker input {
+  width: 100%;
+}
+
+.admin-date-quick {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-date-chip {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.admin-date-chip:hover {
+  border-color: var(--accent-2);
+}
+
 .admin-check {
   display: flex;
   align-items: center;
@@ -3081,6 +3114,15 @@ body:not(.office-route) #login-root {
   box-shadow: 0 0 16px rgba(62, 207, 110, 0.25), var(--shadow);
   animation: prompt-slide 0.3s var(--ease) both;
   z-index: 20;
+}
+
+.hud-room-meet-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.hud-room-meet-link:hover {
+  color: var(--accent-2);
 }
 
 @keyframes prompt-slide {

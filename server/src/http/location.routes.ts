@@ -46,6 +46,10 @@ export interface LocationRouterOptions {
     applyFloorReport(clientIp: string | undefined, floorId: string): number;
     /** Apply to an explicit session id (pair-code path; IP-independent). */
     applyFloorReportBySession(sessionId: string, floorId: string): number;
+    /** Mark matching opted-in sessions remote without moving floors. */
+    applyRemoteReport(clientIp: string | undefined): number;
+    /** Mark one opted-in session remote (pair-code path; IP-independent). */
+    applyRemoteReportBySession(sessionId: string): number;
     floorIds(): string[];
   } | null;
   /** Same trust-proxy decision the rest of the app uses (XFF only when true). */
@@ -107,14 +111,34 @@ export function createLocationRouter(options: LocationRouterOptions = {}): Route
       return;
     }
 
-    // Resolve SSID -> floor id (NEVER logged). No match is a benign no-op.
+    const room = getRoom();
+
+    // PAIRING CODE path is also used for Remote reports so a non-office WiFi
+    // can clear an existing Office tag for the exact opted-in session.
+    const pairCode = typeof body.pairCode === "string" ? body.pairCode : "";
+    const pairEntry =
+      pairCode.trim().length > 0 ? pairCodes.lookup(pairCode, Date.now()) : null;
+
+    // Resolve SSID -> floor id (NEVER logged). No match means REMOTE for the
+    // opted-in caller/session: Kalvium office SSIDs map to floors; everything
+    // else is outside the office.
     const floorId = resolverFor().ssidToFloorId(ssid);
     if (!floorId) {
-      res.status(200).json({ floorId: null, matched: 0 });
+      if (!room) {
+        res.status(200).json({ floorId: null, matched: 0, place: "REMOTE" });
+        return;
+      }
+      if (pairEntry) {
+        const matched = room.applyRemoteReportBySession(pairEntry.sessionId);
+        res.status(200).json({ floorId: null, matched, place: "REMOTE" });
+        return;
+      }
+      const ip = clientIp(req, trustProxy);
+      const matched = room.applyRemoteReport(ip);
+      res.status(200).json({ floorId: null, matched, place: "REMOTE" });
       return;
     }
 
-    const room = getRoom();
     if (!room) {
       res.status(200).json({ floorId, matched: 0 });
       return;
@@ -126,15 +150,11 @@ export function createLocationRouter(options: LocationRouterOptions = {}): Route
     // share one egress IP (NAT, VPN, Docker, or several localhost tabs). An
     // unknown/expired code falls through to the IP match below — never a hard
     // error (a stale code should not break a single-user zero-setup deploy).
-    const pairCode = typeof body.pairCode === "string" ? body.pairCode : "";
-    if (pairCode.trim().length > 0) {
-      const entry = pairCodes.lookup(pairCode, Date.now());
-      if (entry) {
-        // The opted-in gate + consented change live in the room (same as IP).
-        const matched = room.applyFloorReportBySession(entry.sessionId, floorId);
-        res.status(200).json({ floorId, matched });
-        return;
-      }
+    if (pairEntry) {
+      // The opted-in gate + consented change live in the room (same as IP).
+      const matched = room.applyFloorReportBySession(pairEntry.sessionId, floorId);
+      res.status(200).json({ floorId, matched });
+      return;
     }
 
     // IP FALLBACK (zero-setup single user): match the caller's OWN live sessions

@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// "Connect Google Calendar" HUD widget (Google Calendar integration, presentation
+// "Sign in with Google to sync Workspace" HUD widget (Google Calendar
+// integration, presentation
 // only). Self-contained: mountCalendarConnect(container, opts) renders a small
 // row letting the user connect/disconnect their Google Calendar so their real
 // meetings drive their presence (and surface a Join Meet link).
@@ -67,13 +68,13 @@ export function mountCalendarConnect(
   const label = document.createElement("span");
   label.className = "calendar-connect-label";
 
-  // Primary action button. In the disconnected state it reads "Connect" and
+  // Primary action button. In the disconnected state it reads "Sign in" and
   // does a full-page redirect to the server's calendar OAuth entry point; in the
   // connected state it is hidden in favour of the disconnect link.
   const connectBtn = document.createElement("button");
   connectBtn.type = "button";
   connectBtn.className = "calendar-connect-btn";
-  connectBtn.textContent = "Connect";
+  connectBtn.textContent = "Sign in";
 
   // Subtle disconnect affordance, shown only when connected.
   const disconnectBtn = document.createElement("button");
@@ -92,13 +93,13 @@ export function mountCalendarConnect(
 
   function render(): void {
     if (connected) {
-      label.textContent = "Calendar connected";
+      label.textContent = "Google Workspace synced";
       label.classList.add("is-connected");
       connectBtn.hidden = true;
       disconnectBtn.hidden = false;
       disconnectBtn.disabled = busy;
     } else {
-      label.textContent = "Connect Google Calendar";
+      label.textContent = "Sign in with Google to sync Workspace";
       label.classList.remove("is-connected");
       connectBtn.hidden = false;
       connectBtn.disabled = busy;

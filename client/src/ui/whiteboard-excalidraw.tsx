@@ -13,6 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import type { WhiteboardElement } from "@pixeloffice/shared";
+import { DeferredSceneUpdater, type WhiteboardSceneApi } from "./whiteboard-scene-updater";
 
 // Pin Excalidraw's font/asset CDN to the installed version so the hand-drawn
 // fonts resolve without bundling binaries (Constitution: no binary assets). On
@@ -28,9 +29,7 @@ if (typeof window !== "undefined" && !window.EXCALIDRAW_ASSET_PATH) {
 }
 
 // Minimal shape of the Excalidraw imperative API we use.
-interface ExcalidrawApi {
-  updateScene(scene: { elements: readonly unknown[] }): void;
-}
+type ExcalidrawApi = WhiteboardSceneApi;
 
 export interface BoardIsland {
   /** Replace the scene's elements with the reconciled set (remote edits in). */
@@ -48,6 +47,7 @@ export interface BoardIslandOpts {
 export function createBoardIsland(container: HTMLElement, opts: BoardIslandOpts): BoardIsland {
   let api: ExcalidrawApi | null = null;
   const root: Root = createRoot(container);
+  const sceneUpdater = new DeferredSceneUpdater();
 
   root.render(
     <div style={{ width: "100%", height: "100%" }}>
@@ -55,6 +55,7 @@ export function createBoardIsland(container: HTMLElement, opts: BoardIslandOpts)
         initialData={{ elements: opts.initialElements as never, scrollToContent: true }}
         excalidrawAPI={(a) => {
           api = a as unknown as ExcalidrawApi;
+          sceneUpdater.setApi(api);
         }}
         onChange={(elements) => opts.onChange(elements as unknown as WhiteboardElement[])}
       />
@@ -68,9 +69,10 @@ export function createBoardIsland(container: HTMLElement, opts: BoardIslandOpts)
       // each element's `version` (so it doesn't trip our echo guard), making a
       // remote collaborator's drawings actually render. Empty stays empty.
       const restored = restoreElements(elements as never, null);
-      api?.updateScene({ elements: restored });
+      sceneUpdater.update(restored);
     },
     destroy() {
+      if (api) sceneUpdater.clearApi(api);
       // Defer so React isn't asked to unmount synchronously during its own render.
       queueMicrotask(() => root.unmount());
     },

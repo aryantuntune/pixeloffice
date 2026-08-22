@@ -306,6 +306,66 @@ describe("GoogleCalendarAdapter — titles-off mode", () => {
   });
 });
 
+describe("GoogleCalendarAdapter — create Google Meet-backed events", () => {
+  it("inserts a primary-calendar event with a unique Meet conference request", async () => {
+    const tokens = connectedStore();
+    const calls: Array<{ url: string; init: { method?: string; headers?: Record<string, string>; body?: string } }> = [];
+    const fetchImpl: FetchLike = async (input: string, init?: unknown) => {
+      const narrowed = init as { method?: string; headers?: Record<string, string>; body?: string } | undefined;
+      calls.push({ url: input, init: narrowed ?? {} });
+      if (input.includes("/token")) {
+        return resp({ ok: true, status: 200, body: { access_token: "AT", expires_in: 3600 } });
+      }
+      return resp({
+        ok: true,
+        status: 200,
+        body: {
+          id: "gcal-created",
+          summary: "Design Review",
+          start: { dateTime: iso(NOW + 60_000) },
+          end: { dateTime: iso(NOW + 31 * 60_000) },
+          hangoutLink: "https://meet.google.com/new-link",
+        },
+      });
+    };
+    const a = adapter(fetchImpl, tokens);
+
+    const meeting = await a.createMeeting({
+      organizerUserId: USER,
+      title: "Design Review",
+      startTime: NOW + 60_000,
+      endTime: NOW + 31 * 60_000,
+      roomName: "Meeting Room B",
+      attendeeEmails: ["a@example.com", "b@example.com"],
+    });
+
+    expect(meeting).toMatchObject({
+      id: "gcal-created",
+      title: "Design Review",
+      startTime: NOW + 60_000,
+      endTime: NOW + 31 * 60_000,
+      participantIds: [USER],
+      roomName: "Meeting Room B",
+      meetLink: "https://meet.google.com/new-link",
+    });
+
+    const insert = calls.find((c) => c.url.includes("/calendar/v3/calendars/primary/events"));
+    expect(insert?.url).toContain("conferenceDataVersion=1");
+    expect(insert?.url).toContain("sendUpdates=all");
+    expect(insert?.init.method).toBe("POST");
+    expect(insert?.init.headers?.Authorization).toBe("Bearer AT");
+    const body = JSON.parse(insert?.init.body ?? "{}");
+    expect(body).toMatchObject({
+      summary: "Design Review",
+      location: "PixelOffice - Meeting Room B",
+      start: { dateTime: iso(NOW + 60_000) },
+      end: { dateTime: iso(NOW + 31 * 60_000) },
+      attendees: [{ email: "a@example.com" }, { email: "b@example.com" }],
+    });
+    expect(body.conferenceData.createRequest.requestId).toMatch(/^pixeloffice-/);
+  });
+});
+
 describe("GoogleCalendarAdapter — refreshAll prunes disconnected users", () => {
   it("drops cache for a user no longer in connectedUserIds", async () => {
     const tokens = connectedStore();

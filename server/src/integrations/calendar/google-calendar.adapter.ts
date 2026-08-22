@@ -26,6 +26,7 @@
 //   GOOGLE_API_BASE   (default https://www.googleapis.com)
 // ---------------------------------------------------------------------------
 
+import { randomUUID } from "node:crypto";
 import type { MeetingInfo } from "@pixeloffice/shared";
 import type { CalendarAdapter } from "./calendar-adapter";
 import { assignMeetingRoom } from "./mock-calendar.adapter";
@@ -37,7 +38,10 @@ import type { FetchLike } from "../../auth/oauth-provider";
 
 const DEFAULT_TOKEN_BASE = "https://oauth2.googleapis.com";
 const DEFAULT_API_BASE = "https://www.googleapis.com";
-const CAL_SCOPE = "https://www.googleapis.com/auth/calendar.events.readonly";
+const CAL_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events.readonly",
+  "https://www.googleapis.com/auth/calendar.events.owned",
+] as const;
 
 /** Default poll cadence (ms) — 1–2 req/user/min, far under quota. */
 const DEFAULT_POLL_MS = 45_000;
@@ -79,6 +83,8 @@ interface GEventDateTime {
   date?: string; // YYYY-MM-DD — present for ALL-DAY events
 }
 interface GEventAttendee {
+  email?: string;
+  resource?: boolean;
   self?: boolean;
   responseStatus?: string; // "declined" | "accepted" | ...
 }
@@ -99,6 +105,16 @@ interface GEvent {
 }
 interface GEventsListResponse {
   items?: GEvent[];
+}
+
+export interface GoogleCreateMeetingInput {
+  organizerUserId: string;
+  title: string;
+  startTime: number;
+  endTime: number;
+  roomName: string;
+  attendeeEmails?: string[];
+  roomEmail?: string;
 }
 
 export class GoogleCalendarAdapter implements CalendarAdapter {
@@ -151,6 +167,65 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
     return meetings
       .filter((m) => m.startTime > nowMs)
       .sort((a, b) => a.startTime - b.startTime);
+  }
+
+  async createMeeting(input: GoogleCreateMeetingInput): Promise<MeetingInfo> {
+    if (!(input.endTime > input.startTime)) {
+      throw new Error("endTime must be after startTime");
+    }
+    const accessToken = await this.accessTokenFor(input.organizerUserId);
+    const params = new URLSearchParams({
+      conferenceDataVersion: "1",
+      sendUpdates: "all",
+    });
+    const attendees = [...new Set(input.attendeeEmails ?? [])]
+      .map((email) => email.trim().toLowerCase())
+      .filter((email) => email.length > 0)
+      .map((email) => ({ email }));
+    const roomEmail = input.roomEmail?.trim().toLowerCase();
+    if (roomEmail) attendees.push({ email: roomEmail, resource: true });
+    const requestId = `pixeloffice-${randomUUID()}`;
+    const res = await this.timedFetch(
+      `${this.apiBase}/calendar/v3/calendars/primary/events?${params.toString()}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          summary: input.title,
+          location: `PixelOffice - ${input.roomName}`,
+          start: { dateTime: new Date(input.startTime).toISOString() },
+          end: { dateTime: new Date(input.endTime).toISOString() },
+          ...(attendees.length > 0 ? { attendees } : {}),
+          conferenceData: {
+            createRequest: {
+              requestId,
+              conferenceSolutionKey: { type: "hangoutsMeet" },
+            },
+          },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`events.insert failed (${res.status})`);
+    }
+    const ev = (await res.json()) as GEvent;
+    const startTime = ev.start?.dateTime ? Date.parse(ev.start.dateTime) : input.startTime;
+    const endTime = ev.end?.dateTime ? Date.parse(ev.end.dateTime) : input.endTime;
+    const meeting: MeetingInfo = {
+      id: ev.id ?? `gcal_created_${input.startTime}`,
+      title: this.includeTitles ? (ev.summary ?? input.title) : "Busy",
+      startTime: Number.isFinite(startTime) ? startTime : input.startTime,
+      endTime: Number.isFinite(endTime) ? endTime : input.endTime,
+      participantIds: [input.organizerUserId],
+      roomName: input.roomName,
+      ...(extractMeetLink(ev) ? { meetLink: extractMeetLink(ev)! } : {}),
+    };
+    const cached = this.cache.get(input.organizerUserId) ?? [];
+    this.cache.set(input.organizerUserId, [...cached.filter((m) => m.id !== meeting.id), meeting]);
+    return meeting;
   }
 
   // --- Background refresh loop --------------------------------------------
@@ -375,4 +450,4 @@ function asMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export { CAL_SCOPE };
+export { CAL_SCOPES };

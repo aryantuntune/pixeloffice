@@ -31,6 +31,9 @@ export class RedisStore {
       // Connect lazily so a dead Redis at boot does not throw in the
       // constructor — health() decides whether to use it (graceful degradation).
       lazyConnect: true,
+      // Some managed Redis ACL users block INFO, which ioredis uses for the
+      // ready check. greytHR uses the same setting for this shared Redis.
+      enableReadyCheck: false,
       // Bounded retries: don't spin forever against a dead server.
       maxRetriesPerRequest: 1,
       retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)),

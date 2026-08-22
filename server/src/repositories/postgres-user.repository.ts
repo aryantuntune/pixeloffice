@@ -20,12 +20,13 @@ import type { StoredUser, UserRepository } from "./user.repository";
 
 interface UserRow {
   id: string;
+  email: string | null;
   display_name: string;
   department: string;
   avatar_id: string;
 }
 
-const SELECT_COLUMNS = "id, display_name, department, avatar_id";
+const SELECT_COLUMNS = "id, email, display_name, department, avatar_id";
 
 export class PostgresUserRepository implements UserRepository {
   constructor(private readonly db: Database) {}
@@ -33,14 +34,15 @@ export class PostgresUserRepository implements UserRepository {
   /** Upsert by primary key. Updates name/department/avatar + updated_at. */
   async save(user: StoredUser): Promise<StoredUser> {
     await this.db.query(
-      `INSERT INTO users (id, display_name, department, avatar_id, updated_at)
-       VALUES ($1, $2, $3, $4, now())
+      `INSERT INTO users (id, email, display_name, department, avatar_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
        ON CONFLICT (id) DO UPDATE SET
+         email        = COALESCE(EXCLUDED.email, users.email),
          display_name = EXCLUDED.display_name,
          department   = EXCLUDED.department,
          avatar_id    = EXCLUDED.avatar_id,
          updated_at   = now()`,
-      [user.id, user.name, user.department, user.avatarId],
+      [user.id, user.email ?? null, user.name, user.department, user.avatarId],
     );
     return { ...user };
   }
@@ -68,5 +70,6 @@ function rowToUser(row: UserRow): StoredUser {
     name: row.display_name,
     department: row.department as Department,
     avatarId: row.avatar_id as AvatarId,
+    ...(row.email ? { email: row.email } : {}),
   };
 }
