@@ -18,13 +18,10 @@
 // ---------------------------------------------------------------------------
 
 import type { RtcCallKind } from "@pixeloffice/shared";
+import { Room, RoomEvent, Track, type RemoteTrackPublication, type RemoteParticipant } from "livekit-client";
 
-/** Public STUN only — no TURN. Works on localhost + most same-LAN/NAT setups
- *  with zero infrastructure (Constitution: never break zero-config dev). Cross
- *  symmetric-NAT may fail without a TURN server, which can be added later. */
 const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 const DISCONNECT_GRACE_MS = 5_000;
-
 export interface CallManagerEvents {
   /** A remote media stream arrived for a peer (attach to a <video>/<audio>). */
   onRemoteStream(peerId: string, stream: MediaStream): void;
@@ -50,8 +47,8 @@ interface PeerCall {
   haveRemoteDescription: boolean;
   disconnectTimer: ReturnType<typeof setTimeout> | null;
   activeEmitted: boolean;
+  livekitRoom?: Room;
 }
-
 export interface CallManagerDeps {
   selfId: () => string;
   /** Relay an opaque signaling blob to a peer (main.ts -> conn.send RTC_SIGNAL). */
@@ -61,6 +58,8 @@ export interface CallManagerDeps {
 
 export class CallManager {
   private readonly calls = new Map<string, PeerCall>();
+  private livekitConfig: { enabled: boolean; url?: string } | null = null;
+  private configPromise: Promise<{ enabled: boolean; url?: string }> | null = null;
 
   constructor(private readonly deps: CallManagerDeps) {}
 
@@ -81,6 +80,11 @@ export class CallManager {
    */
   async startCall(peerId: string, kind: RtcCallKind): Promise<void> {
     try {
+      const lk = await this.getLiveKitConfig();
+      if (lk.enabled && lk.url) {
+        await this.startLiveKitCall(peerId, kind, lk.url);
+        return;
+      }
       const call = await this.ensureCall(peerId, kind);
       // Only the impolite peer (smaller id) makes the initial offer to avoid glare.
       if (this.isImpolite(peerId)) {
@@ -100,6 +104,9 @@ export class CallManager {
    * so the callee does not need to pre-arm anything beyond accepting.
    */
   async handleSignal(peerId: string, data: unknown, kindHint: RtcCallKind): Promise<void> {
+    const lk = await this.getLiveKitConfig();
+    if (lk.enabled) return; // LiveKit manages its own SFU signaling
+
     const blob = data as { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit } | null;
     if (!blob) return;
     try {
@@ -130,6 +137,11 @@ export class CallManager {
   /** Enable/disable the local mic track for a peer's call. Returns the new state. */
   setMicEnabled(peerId: string, enabled: boolean): boolean {
     const call = this.calls.get(peerId);
+    if (call?.livekitRoom) {
+      void call.livekitRoom.localParticipant.setMicrophoneEnabled(enabled);
+      this.deps.events.onMicState(peerId, enabled);
+      return enabled;
+    }
     if (!call?.local) return false;
     for (const track of call.local.getAudioTracks()) track.enabled = enabled;
     this.deps.events.onMicState(peerId, enabled);
@@ -139,15 +151,22 @@ export class CallManager {
   /** Whether the local mic is currently transmitting for a peer's call. */
   isMicEnabled(peerId: string): boolean {
     const call = this.calls.get(peerId);
+    if (call?.livekitRoom) {
+      return call.livekitRoom.localParticipant.isMicrophoneEnabled;
+    }
     if (!call?.local) return false;
     return call.local.getAudioTracks().some((t) => t.enabled);
   }
-
   /** Tear down the call with one peer (stops local media, closes the connection). */
   endCall(peerId: string): void {
     const call = this.calls.get(peerId);
     if (!call) return;
     this.calls.delete(peerId);
+    if (call.livekitRoom) {
+      try {
+        call.livekitRoom.disconnect();
+      } catch {}
+    }
     if (call.disconnectTimer) clearTimeout(call.disconnectTimer);
     for (const track of call.local?.getTracks() ?? []) track.stop();
     try {
@@ -174,6 +193,86 @@ export class CallManager {
   private isImpolite(peerId: string): boolean {
     return this.deps.selfId() < peerId;
   }
+  private async getLiveKitConfig(): Promise<{ enabled: boolean; url?: string }> {
+    if (this.livekitConfig) return this.livekitConfig;
+    if (!this.configPromise) {
+      this.configPromise = fetch("/api/livekit/config")
+        .then((res) => (res.ok ? res.json() : { enabled: false }))
+        .catch(() => ({ enabled: false }));
+    }
+    this.livekitConfig = await this.configPromise;
+    return this.livekitConfig;
+  }
+
+  private async startLiveKitCall(peerId: string, kind: RtcCallKind, lkUrl: string): Promise<void> {
+    const selfId = this.deps.selfId();
+    const roomName = `call-${[selfId, peerId].sort().join("-")}`;
+
+    const res = await fetch("/api/livekit/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ room: roomName, identity: selfId }),
+    });
+
+    if (!res.ok) throw new Error("Could not acquire LiveKit room token.");
+    const { token, url } = (await res.json()) as { token: string; url: string };
+
+    const room = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+    });
+
+    const remoteStream = new MediaStream();
+    const dummyPc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+    const call: PeerCall = {
+      pc: dummyPc,
+      kind,
+      local: null,
+      remote: remoteStream,
+      pendingCandidates: [],
+      haveRemoteDescription: true,
+      disconnectTimer: null,
+      activeEmitted: false,
+      livekitRoom: room,
+    };
+
+    this.calls.set(peerId, call);
+
+    room.on(RoomEvent.TrackSubscribed, (track, _pub: RemoteTrackPublication, _participant: RemoteParticipant) => {
+      if (track.mediaStreamTrack) {
+        remoteStream.addTrack(track.mediaStreamTrack);
+        this.deps.events.onRemoteStream(peerId, remoteStream);
+      }
+    });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.mediaStreamTrack) {
+        remoteStream.removeTrack(track.mediaStreamTrack);
+      }
+    });
+
+    room.on(RoomEvent.Disconnected, () => {
+      this.endCall(peerId);
+    });
+
+    await room.connect(url || lkUrl, token);
+
+    // Enable mic and camera
+    await room.localParticipant.setMicrophoneEnabled(true);
+    if (kind === "video") {
+      await room.localParticipant.setCameraEnabled(true);
+      const localVideoTrack = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track?.mediaStreamTrack;
+      if (localVideoTrack) {
+        const localStream = new MediaStream([localVideoTrack]);
+        this.deps.events.onLocalStream(peerId, localStream, kind);
+      }
+    }
+
+    this.deps.events.onCallActive(peerId, kind);
+    this.deps.events.onMicState(peerId, true);
+  }
+
 
   /** Get or create the peer connection + local media for a call. */
   private async ensureCall(peerId: string, kind: RtcCallKind): Promise<PeerCall> {

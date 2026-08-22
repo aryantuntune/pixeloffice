@@ -27,8 +27,7 @@ import { createAdminRouter } from "./http/admin.routes";
 import { createMapsRouter } from "./http/maps.routes";
 import { createLocationRouter } from "./http/location.routes";
 import { createAuthRouter } from "./http/auth.routes";
-import { createHrRouter, type SessionUser } from "./http/hr.routes";
-import { emailForName } from "./integrations/hr/mock-greythr.adapter";
+import { createLiveKitRouter } from "./http/livekit.routes";
 import { createRateLimiter } from "./http/rate-limit";
 import { mountStaticClient, shouldServeClient } from "./http/static-client";
 import { installShutdown } from "./lifecycle/shutdown";
@@ -191,6 +190,16 @@ async function main(): Promise<void> {
         // hits. When OAuth provides a real email, surface it here instead.
         return { userId: p.userId, name: p.name, email: emailForName(p.name) };
       },
+    }),
+  );
+
+  // LiveKit SFU integration (audio/video for 10-12 concurrent participants).
+  app.use(
+    "/api/livekit",
+    createLiveKitRouter({
+      url: process.env.LIVEKIT_URL,
+      apiKey: process.env.LIVEKIT_API_KEY,
+      apiSecret: process.env.LIVEKIT_API_SECRET,
     }),
   );
 
