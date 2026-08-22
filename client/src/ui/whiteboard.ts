@@ -42,10 +42,9 @@ export interface WhiteboardDeps {
 export interface WhiteboardHandle {
   /** Open (or switch to) a department board overlay. */
   open(board: Department): void;
-  handleState(payload: WhiteboardStateS2C): void;
+  handleStateChunk(payload: WhiteboardStateChunkS2C): void;
   handleUpdate(payload: WhiteboardUpdateS2C): void;
   handleClear(payload: WhiteboardClearS2C): void;
-  handleStateChunk(payload: WhiteboardStateChunkS2C): void;
   destroy(): void;
 }
 
@@ -278,7 +277,8 @@ export function mountWhiteboard(parent: HTMLElement, deps: WhiteboardDeps): Whit
     const board = currentBoard;
     closeQuietly();
     currentBoard = null;
-  return { open, handleStateChunk, handleUpdate, handleClear, destroy };
+    deps.close(board);
+    deps.onOpenChange?.(false);
   }
 
   function destroy(): void {
@@ -290,5 +290,5 @@ export function mountWhiteboard(parent: HTMLElement, deps: WhiteboardDeps): Whit
     canvasHost = null;
   }
 
-  return { open, handleState, handleUpdate, handleClear, destroy };
+  return { open, handleStateChunk, handleUpdate, handleClear, destroy };
 }
