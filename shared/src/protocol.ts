@@ -187,11 +187,20 @@ export const S2C = {
   RTC_SIGNAL: "rtc-signal",
   /** Full current state of a whiteboard, sent to a client when it opens one. */
   WHITEBOARD_STATE: "wb-state",
+  /** A chunk of the full whiteboard state (for large boards). */
+  WHITEBOARD_STATE_CHUNK: "wb-state-chunk",
   /** Changed elements another viewer made on a whiteboard. */
   WHITEBOARD_UPDATE: "wb-update",
   /** A whiteboard was cleared by a viewer. */
   WHITEBOARD_CLEAR: "wb-clear",
 } as const;
+
+export interface WhiteboardStateChunkS2C {
+  board: string;
+  chunkIndex: number;
+  totalChunks: number;
+  elements: WhiteboardElement[];
+}
 
 /**
  * The pairing code for the companion floor-sync helper (S2C.FLOOR_SYNC_CODE).

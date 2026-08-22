@@ -229,7 +229,10 @@ async function main(): Promise<void> {
   const httpServer = createServer(app);
 
   const gameServer = new Server({
-    transport: new WebSocketTransport({ server: httpServer }),
+    transport: new WebSocketTransport({
+      server: httpServer,
+      maxPayload: 5 * 1024 * 1024, // 5 MB (Ample headroom for signaling 12+ peers & board states)
+    }),
     // Our lifecycle module owns SIGINT/SIGTERM; Colyseus's built-in handler
     // would race it and log "already_shutting_down" (seen in live logs).
     gracefullyShutdown: false,

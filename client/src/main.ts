@@ -741,8 +741,8 @@ function registerBridge(conn: Connection): void {
   });
 
   // Whiteboard sync (department-scoped). The controller owns the canvas state.
-  conn.on<WhiteboardStateS2C>(S2C.WHITEBOARD_STATE, (payload) => {
-    whiteboard?.handleState(payload);
+  conn.on<WhiteboardStateChunkS2C>(S2C.WHITEBOARD_STATE_CHUNK, (payload) => {
+    whiteboard?.handleStateChunk(payload);
   });
   conn.on<WhiteboardUpdateS2C>(S2C.WHITEBOARD_UPDATE, (payload) => {
     whiteboard?.handleUpdate(payload);

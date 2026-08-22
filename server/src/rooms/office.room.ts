@@ -1513,8 +1513,20 @@ export class OfficeRoom extends Room {
     const snap = this.players.get(client.sessionId);
     if (!snap || snap.isNpc) return;
     this.wbSubscribers(board).add(client.sessionId);
-    const state: WhiteboardStateS2C = { board, elements: container.whiteboard.elements(board) };
-    client.send(S2C.WHITEBOARD_STATE, state);
+
+    const elements = container.whiteboard.elements(board);
+    const CHUNK_SIZE = 400; // Elements per chunk, safe for WebSocket limit
+    const totalChunks = Math.ceil(elements.length / CHUNK_SIZE) || 1;
+
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk: WhiteboardStateChunkS2C = {
+        board,
+        chunkIndex: i,
+        totalChunks,
+        elements: elements.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+      };
+      client.send(S2C.WHITEBOARD_STATE_CHUNK, chunk);
+    }
   }
 
   private handleWhiteboardClose(client: Client, payload: WhiteboardCloseC2S): void {
