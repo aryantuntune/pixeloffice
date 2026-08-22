@@ -32,6 +32,7 @@ import { createLiveKitRouter } from "./http/livekit.routes";
 import { createRateLimiter } from "./http/rate-limit";
 import { mountStaticClient, shouldServeClient } from "./http/static-client";
 import { installShutdown } from "./lifecycle/shutdown";
+import { emailForName } from "./integrations/hr/mock-greythr.adapter";
 import { container, initContainer } from "./container";
 
 const PORT = readPort();
