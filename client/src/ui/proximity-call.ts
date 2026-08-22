@@ -119,11 +119,16 @@ export function mountProximityCall(
   remoteVideo.className = "prox-video prox-remote";
   remoteVideo.autoplay = true;
   remoteVideo.playsInline = true;
+  remoteVideo.setAttribute("playsinline", "true");
+  remoteVideo.setAttribute("webkit-playsinline", "true");
   const localVideo = document.createElement("video");
   localVideo.className = "prox-video prox-local";
   localVideo.autoplay = true;
   localVideo.playsInline = true;
   localVideo.muted = true; // never play back our own mic (no echo)
+  localVideo.setAttribute("playsinline", "true");
+  localVideo.setAttribute("webkit-playsinline", "true");
+  localVideo.setAttribute("muted", "true");
   tiles.append(remoteVideo, localVideo);
   const controls = document.createElement("div");
   controls.className = "prox-controls";
@@ -149,10 +154,20 @@ export function mountProximityCall(
     sendSignal: (to, data) => deps.sendSignal({ to, data }),
     events: {
       onRemoteStream: (peerId, stream) => {
-        if (call?.peerId === peerId) remoteVideo.srcObject = stream;
+        if (call?.peerId === peerId) {
+          if (remoteVideo.srcObject !== stream) {
+            remoteVideo.srcObject = stream;
+          }
+          void remoteVideo.play().catch(() => {});
+        }
       },
       onLocalStream: (peerId, stream, kind) => {
-        if (call?.peerId === peerId && kind === "video") localVideo.srcObject = stream;
+        if (call?.peerId === peerId && kind === "video") {
+          if (localVideo.srcObject !== stream) {
+            localVideo.srcObject = stream;
+          }
+          void localVideo.play().catch(() => {});
+        }
       },
       onCallActive: (peerId, kind) => {
         if (!call || call.peerId !== peerId) return;
@@ -186,35 +201,52 @@ export function mountProximityCall(
     deps.sendCall({ to: nearest.id, kind, action: "request" });
     render();
   }
-  btnSpeak.addEventListener("click", () => placeCall("audio"));
-  btnVideo.addEventListener("click", () => placeCall("video"));
+  btnSpeak.addEventListener("click", (e) => {
+    e.preventDefault();
+    placeCall("audio");
+  });
+  btnVideo.addEventListener("click", (e) => {
+    e.preventDefault();
+    placeCall("video");
+  });
 
-  btnAccept.addEventListener("click", () => {
+  btnAccept.addEventListener("click", (e) => {
+    e.preventDefault();
     if (!call || call.phase !== "incoming") return;
     const { peerId, kind } = call;
+    call.phase = "active";
     deps.sendCall({ to: peerId, kind, action: "accept" });
     // Both sides begin negotiation on accept; CallManager's polite/impolite
     // split decides who actually offers (glare-free).
     void manager.startCall(peerId, kind);
     render();
   });
-  btnReject.addEventListener("click", () => {
+  btnReject.addEventListener("click", (e) => {
+    e.preventDefault();
     if (!call || call.phase !== "incoming") return;
     deps.sendCall({ to: call.peerId, kind: call.kind, action: "reject" });
     call = null;
+    remoteVideo.srcObject = null;
+    localVideo.srcObject = null;
     render();
   });
-  btnMute.addEventListener("click", () => {
+  btnMute.addEventListener("click", (e) => {
+    e.preventDefault();
     if (!call || call.phase !== "active") return;
     const next = !manager.isMicEnabled(call.peerId);
     manager.setMicEnabled(call.peerId, next);
   });
-  btnHangup.addEventListener("click", () => {
+  btnHangup.addEventListener("click", (e) => {
+    e.preventDefault();
     if (!call) return;
     const action = call.phase === "outgoing" ? "cancel" : "hangup";
     deps.sendCall({ to: call.peerId, kind: call.kind, action });
     manager.endCall(call.peerId);
-    if (action === "cancel") call = null; // endCall has nothing to end yet
+    if (action === "cancel") {
+      call = null; // endCall has nothing to end yet
+      remoteVideo.srcObject = null;
+      localVideo.srcObject = null;
+    }
     render();
   });
 
@@ -278,6 +310,8 @@ export function mountProximityCall(
     if (call?.peerId === sessionId) {
       manager.endCall(sessionId);
       call = null;
+      remoteVideo.srcObject = null;
+      localVideo.srcObject = null;
       render();
     }
   }
@@ -312,6 +346,8 @@ export function mountProximityCall(
       manager.endCall(call.peerId);
       deps.toast?.(`Call with ${call.peerName} ended — out of range.`);
       call = null;
+      remoteVideo.srcObject = null;
+      localVideo.srcObject = null;
     }
 
     // Pick the single nearest in-range peer for the prompt buttons.
@@ -378,7 +414,9 @@ export function mountProximityCall(
     destroy() {
       unsubscribe();
       manager.endAll();
+      remoteVideo.srcObject = null;
+      localVideo.srcObject = null;
       root.remove();
     },
-  };
+}
 }

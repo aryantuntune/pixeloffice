@@ -215,7 +215,10 @@ export class CallManager {
     for (const track of local.getTracks()) pc.addTrack(track, local);
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) this.deps.sendSignal(peerId, { candidate: e.candidate.toJSON() });
+      if (e.candidate) {
+        const candidate = (typeof e.candidate.toJSON === "function") ? e.candidate.toJSON() : JSON.parse(JSON.stringify(e.candidate));
+        this.deps.sendSignal(peerId, { candidate });
+      }
     };
     pc.ontrack = (e) => {
       for (const track of e.streams[0]?.getTracks() ?? [e.track]) remote.addTrack(track);
@@ -256,8 +259,8 @@ export class CallManager {
     for (const c of queued) {
       try {
         await call.pc.addIceCandidate(c);
-      } catch {
-        /* ignore a stale candidate */
+      } catch (err) {
+        // Non-fatal: stale or invalid candidate during negotiation.
       }
     }
   }
