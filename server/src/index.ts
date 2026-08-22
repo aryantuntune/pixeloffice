@@ -27,6 +27,7 @@ import { createAdminRouter } from "./http/admin.routes";
 import { createMapsRouter } from "./http/maps.routes";
 import { createLocationRouter } from "./http/location.routes";
 import { createAuthRouter } from "./http/auth.routes";
+import { createHrRouter } from "./http/hr.routes";
 import { createLiveKitRouter } from "./http/livekit.routes";
 import { createRateLimiter } from "./http/rate-limit";
 import { mountStaticClient, shouldServeClient } from "./http/static-client";
