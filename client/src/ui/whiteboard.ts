@@ -42,7 +42,7 @@ export interface WhiteboardDeps {
 export interface WhiteboardHandle {
   /** Open (or switch to) a department board overlay. */
   open(board: Department): void;
-  handleState(payload: WhiteboardStateS2C): void;
+  handleStateChunk(payload: WhiteboardStateChunkS2C): void;
   handleUpdate(payload: WhiteboardUpdateS2C): void;
   handleClear(payload: WhiteboardClearS2C): void;
   destroy(): void;
@@ -149,6 +149,7 @@ export function mountWhiteboard(parent: HTMLElement, deps: WhiteboardDeps): Whit
   }
 
   function open(board: Department): void {
+    console.log("[Whiteboard] Opening board", board);
     if (currentBoard === board) return;
     if (currentBoard) closeQuietly();
 
@@ -220,25 +221,37 @@ export function mountWhiteboard(parent: HTMLElement, deps: WhiteboardDeps): Whit
     pending.clear();
     island?.updateScene([]);
   }
+  // Chunks received since the last open operation.
+  const receivedChunks = new Map<string, WhiteboardStateChunkS2C[]>();
 
-  function handleState(payload: WhiteboardStateS2C): void {
+  function handleStateChunk(payload: WhiteboardStateChunkS2C): void {
+    console.log("[Whiteboard] Received chunk", payload.chunkIndex + 1, "/", payload.totalChunks);
     if (payload.board !== currentBoard) return;
-    merged.clear();
-    lastVersion.clear();
-    for (const el of payload.elements) {
-      merged.set(el.id, el);
-      lastVersion.set(el.id, el.version);
-    }
-    island?.updateScene([...merged.values()]);
-  }
 
+    if (!receivedChunks.has(payload.board)) receivedChunks.set(payload.board, []);
+    const chunks = receivedChunks.get(payload.board)!;
+    chunks[payload.chunkIndex] = payload;
+
+    if (chunks.filter(Boolean).length === payload.totalChunks) {
+      receivedChunks.delete(payload.board);
+      lastVersion.clear();
+      for (const chunk of chunks) {
+        for (const el of chunk.elements) {
+          merged.set(el.id, el);
+          lastVersion.set(el.id, el.version);
+        }
+      }
+      island?.updateScene([...merged.values()]);
+    }
+  }
   function handleUpdate(payload: WhiteboardUpdateS2C): void {
+    console.log("[Whiteboard] Received update", payload.board, payload.elements.length, "elements");
     if (payload.board !== currentBoard) return;
     reconcileIn(payload.elements);
     island?.updateScene([...merged.values()]);
   }
-
   function handleClear(payload: WhiteboardClearS2C): void {
+    console.log("[Whiteboard] Received clear", payload.board);
     if (payload.board !== currentBoard) return;
     applyClearLocally();
   }
@@ -255,6 +268,7 @@ export function mountWhiteboard(parent: HTMLElement, deps: WhiteboardDeps): Whit
     merged.clear();
     lastVersion.clear();
     pending.clear();
+    receivedChunks.clear();
     if (overlay) overlay.style.display = "none";
   }
 
@@ -276,5 +290,5 @@ export function mountWhiteboard(parent: HTMLElement, deps: WhiteboardDeps): Whit
     canvasHost = null;
   }
 
-  return { open, handleState, handleUpdate, handleClear, destroy };
+  return { open, handleStateChunk, handleUpdate, handleClear, destroy };
 }

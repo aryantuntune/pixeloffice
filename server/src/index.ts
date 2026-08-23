@@ -27,11 +27,12 @@ import { createAdminRouter } from "./http/admin.routes";
 import { createMapsRouter } from "./http/maps.routes";
 import { createLocationRouter } from "./http/location.routes";
 import { createAuthRouter } from "./http/auth.routes";
-import { createHrRouter, type SessionUser } from "./http/hr.routes";
-import { emailForName } from "./integrations/hr/mock-greythr.adapter";
+import { createHrRouter } from "./http/hr.routes";
+import { createLiveKitRouter } from "./http/livekit.routes";
 import { createRateLimiter } from "./http/rate-limit";
 import { mountStaticClient, shouldServeClient } from "./http/static-client";
 import { installShutdown } from "./lifecycle/shutdown";
+import { emailForName } from "./integrations/hr/mock-greythr.adapter";
 import { container, initContainer } from "./container";
 
 const PORT = readPort();
@@ -194,6 +195,16 @@ async function main(): Promise<void> {
     }),
   );
 
+  // LiveKit SFU integration (audio/video for 10-12 concurrent participants).
+  app.use(
+    "/api/livekit",
+    createLiveKitRouter({
+      url: process.env.LIVEKIT_URL,
+      apiKey: process.env.LIVEKIT_API_KEY,
+      apiSecret: process.env.LIVEKIT_API_SECRET,
+    }),
+  );
+
   // Uniform JSON 404 for unmatched /api routes (every real handler returns
   // {error}). Registered AFTER the API routers but BEFORE the SPA fallback so an
   // unknown /api path is never served index.html nor the Express HTML 404 page.
@@ -229,7 +240,10 @@ async function main(): Promise<void> {
   const httpServer = createServer(app);
 
   const gameServer = new Server({
-    transport: new WebSocketTransport({ server: httpServer }),
+    transport: new WebSocketTransport({
+      server: httpServer,
+      maxPayload: 5 * 1024 * 1024, // 5 MB (Ample headroom for signaling 12+ peers & board states)
+    }),
     // Our lifecycle module owns SIGINT/SIGTERM; Colyseus's built-in handler
     // would race it and log "already_shutting_down" (seen in live logs).
     gracefullyShutdown: false,
