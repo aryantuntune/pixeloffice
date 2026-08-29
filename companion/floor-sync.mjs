@@ -61,7 +61,7 @@ async function tryExec(cmd, args) {
 }
 
 async function readSsidLinux() {
-  // nmcli -t -f active,ssid dev wifi  ->  lines like "yes:Hustle@KALVIUM2F5G"
+  // 1) NetworkManager nmcli
   const out = await tryExec("nmcli", ["-t", "-f", "active,ssid", "dev", "wifi"]);
   for (const line of out.split("\n")) {
     if (line.startsWith("yes:")) {
@@ -69,12 +69,40 @@ async function readSsidLinux() {
       if (ssid) return ssid;
     }
   }
+
+  // 2) wireless-tools iwgetid
+  const iwgetid = (await tryExec("iwgetid", ["-r"])).trim();
+  if (iwgetid) return iwgetid;
+
+  // 3) wpa_cli status
+  const wpa = await tryExec("wpa_cli", ["status"]);
+  const wpaMatch = wpa.match(/^ssid=(.+)$/m);
+  if (wpaMatch && wpaMatch[1].trim()) return wpaMatch[1].trim();
+
+  // 4) iw dev link
+  const iw = await tryExec("iw", ["dev"]);
+  const ifaceMatch = iw.match(/Interface\s+([^\s]+)/);
+  if (ifaceMatch) {
+    const link = await tryExec("iw", ["dev", ifaceMatch[1], "link"]);
+    const ssidMatch = link.match(/SSID:\s*(.+)$/m);
+    if (ssidMatch && ssidMatch[1].trim()) return ssidMatch[1].trim();
+  }
+
   return "";
 }
 
 async function readSsidMac() {
-  // Newer macOS deprecated the airport CLI. Try a few sources, take the first hit.
-  // 1) Legacy airport -I (works on older macOS).
+  // 1) networksetup -getairportnetwork (works cleanly across macOS Sonoma, Sequoia, and older).
+  const ports = await tryExec("networksetup", ["-listallhardwareports"]);
+  const portMatch = ports.match(/Hardware Port:\s*Wi-Fi\s*\nDevice:\s*(en\d+)/i);
+  const wifiIface = portMatch ? portMatch[1] : "en0";
+  const netOut = await tryExec("networksetup", ["-getairportnetwork", wifiIface]);
+  const netMatch = netOut.match(/Current Wi-Fi Network:\s*(.+)$/m);
+  if (netMatch && netMatch[1].trim() && !/not associated/i.test(netMatch[1])) {
+    return netMatch[1].trim();
+  }
+
+  // 2) Legacy airport -I (works on older macOS).
   const airport = await tryExec(
     "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport",
     ["-I"]
@@ -82,12 +110,12 @@ async function readSsidMac() {
   const airportMatch = airport.match(/^\s*SSID:\s*(.+)$/m);
   if (airportMatch && airportMatch[1].trim()) return airportMatch[1].trim();
 
-  // 2) system_profiler SPAirPortDataType (newer; "Current Network Information:" block).
+  // 3) system_profiler SPAirPortDataType.
   const sp = await tryExec("system_profiler", ["SPAirPortDataType"]);
   const spMatch = sp.match(/Current Network Information:\s*\n\s*(.+?):\s*\n/);
   if (spMatch && spMatch[1].trim()) return spMatch[1].trim();
 
-  // 3) wdutil info (very new macOS; may require sudo, so best-effort).
+  // 4) wdutil info.
   const wd = await tryExec("wdutil", ["info"]);
   const wdMatch = wd.match(/^\s*SSID\s*:\s*(.+)$/m);
   if (wdMatch) {
@@ -98,7 +126,7 @@ async function readSsidMac() {
 }
 
 async function readSsidWindows() {
-  // netsh wlan show interfaces -> a "SSID" line (must avoid the "BSSID" line).
+  // 1) netsh wlan show interfaces
   const out = await tryExec("netsh", ["wlan", "show", "interfaces"]);
   for (const line of out.split("\n")) {
     const m = line.match(/^\s*SSID\s*:\s*(.+)$/);
@@ -107,6 +135,17 @@ async function readSsidWindows() {
       if (ssid) return ssid;
     }
   }
+
+  // 2) PowerShell Get-NetConnectionProfile fallback (handles non-English Windows locales)
+  const ps = await tryExec("powershell", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "(Get-NetConnectionProfile | Where-Object { $_.InterfaceAlias -match 'Wi-Fi|Wireless|WLAN' -or $_.IPv4Connectivity -eq 'Internet' } | Select-Object -First 1).Name",
+  ]);
+  const psName = ps.trim();
+  if (psName && !/error/i.test(psName)) return psName;
+
   return "";
 }
 
@@ -179,6 +218,8 @@ function postReport(ssid) {
 // ---- Loop ------------------------------------------------------------------
 
 let lastSsid = null;
+let lastMatched = 0;
+let lastReportTime = 0;
 let stopped = false;
 
 async function tick() {
@@ -189,20 +230,28 @@ async function tick() {
     ssid = "";
   }
 
-  // Only act when the SSID changed since last tick (reduce noise).
-  if (ssid === lastSsid) return;
-  lastSsid = ssid;
+  const now = Date.now();
+  const ssidChanged = ssid !== lastSsid;
+  const retryNeeded = lastMatched === 0 || (now - lastReportTime >= 45000);
+
+  if (!ssidChanged && !retryNeeded) return;
 
   if (!ssid) {
     // Not on WiFi (or couldn't read it). Stay quiet but keep looping.
+    lastSsid = "";
     return;
   }
 
   try {
     const res = await postReport(ssid);
+    lastReportTime = now;
     if (res.status === 200 && res.body) {
       const floor = res.body.floorId ? res.body.floorId : "no matching floor";
-      console.log(`On ${ssid} -> reported (${floor}, applied to ${res.body.matched ?? 0})`);
+      lastMatched = res.body.matched ?? 0;
+      lastSsid = ssid;
+      if (lastMatched > 0 || ssidChanged) {
+        console.log(`On ${ssid} -> reported (${floor}, applied to ${lastMatched} active session${lastMatched === 1 ? "" : "s"})`);
+      }
     } else if (res.status === 401) {
       console.warn(`On ${ssid} -> rejected (401): FLOOR_SYNC_SECRET is required or wrong.`);
     } else if (res.status === 400) {
@@ -213,7 +262,7 @@ async function tick() {
   } catch (err) {
     // Network down / server unreachable: warn once for this change, keep looping.
     console.warn(`On ${ssid} -> could not reach ${SERVER} (${err.message}). Will retry.`);
-    // Reset so the next successful tick re-reports the same SSID.
+    // Reset so the next tick re-reports the same SSID.
     lastSsid = null;
   }
 }

@@ -10,6 +10,7 @@
 // dev path; a DB/file-backed impl can implement the same interface in prod.
 // ---------------------------------------------------------------------------
 
+import { EventEmitter } from "node:events";
 import {
   buildDefaultBuilding,
   serializeBuilding,
@@ -25,7 +26,7 @@ export interface MapRecord {
   active: boolean;
 }
 
-export interface MapRepository {
+export interface MapRepository extends EventEmitter {
   /** All stored maps as light records (no geometry). */
   listMaps(): MapRecord[];
   /** Full building JSON for an id, or null. */
@@ -44,21 +45,12 @@ export interface MapRepository {
   getActiveId(): string;
 }
 
-/**
- * In-memory MapRepository seeded with the default 3-floor building as the active
- * map. Stores buildings in their JSON form (the Map Studio save format) and
- * re-parses on read so the active building is always a freshly validated copy
- * (no shared mutable aliasing with the seed cache).
- *
- * Changing the active map applies to NEW joins only — live players keep their
- * session on whatever building/floor they are currently on (the room captured
- * its building reference at create). This is the documented, simple behavior.
- */
-export class InMemoryMapRepository implements MapRepository {
+export class InMemoryMapRepository extends EventEmitter implements MapRepository {
   private readonly maps = new Map<string, BuildingJSON>();
   private activeId: string;
 
   constructor(seed: Building = buildDefaultBuilding()) {
+    super();
     const json = serializeBuilding(seed);
     this.maps.set(json.id, json);
     this.activeId = json.id;
@@ -82,12 +74,16 @@ export class InMemoryMapRepository implements MapRepository {
     // (REST route) maps that to a 400.
     const building = parseBuilding(json);
     this.maps.set(building.id, serializeBuilding(building));
+    if (building.id === this.activeId) {
+      this.emit("map-activated", building);
+    }
     return building;
   }
 
   setActive(id: string): boolean {
     if (!this.maps.has(id)) return false;
     this.activeId = id;
+    this.emit("map-activated", this.getActiveBuilding());
     return true;
   }
 

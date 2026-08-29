@@ -160,11 +160,11 @@ export class OfficeRoom extends Room {
   maxClients = 120;
 
   /**
-   * The active building captured at create. Live players keep this building for
-   * their whole session (changing the ACTIVE map via /api/maps applies to NEW
-   * rooms/joins only — documented in MULTIFLOOR-CONTRACT.md).
+   * The Building this room serves. Multi-floor support: players can explore every
+   * floor in this building, and stepping on elevator/stair portals moves them
+   * between floors.
    */
-  private readonly building: Building = container.maps.getActiveBuilding();
+  private building: Building = container.maps.getActiveBuilding();
   /** Fast floorId -> Floor lookup (a Floor IS an OfficeMap, so all map helpers work). */
   private readonly floors = new Map<string, Floor>(
     this.building.floors.map((f) => [f.id, f]),
@@ -175,14 +175,14 @@ export class OfficeRoom extends Room {
    * floor, and the target of floor-scoped fallbacks. NOTE: this is NOT where new
    * players spawn — that is `spawnFloorId` (the rich main office, now Floor 2).
    */
-  private readonly groundFloorId: string =
+  private groundFloorId: string =
     (this.building.floors.find((f) => f.index === 0) ?? this.building.floors[0]).id;
   /**
    * The floor a NEW player spawns on (the rich main office — Floor 2 in the
    * default building, exported as SPAWN_FLOOR_ID). Falls back to the ground floor
    * for custom buildings that lack that floor id.
    */
-  private readonly spawnFloorId: string = this.floors.has(SPAWN_FLOOR_ID)
+  private spawnFloorId: string = this.floors.has(SPAWN_FLOOR_ID)
     ? SPAWN_FLOOR_ID
     : this.groundFloorId;
   /**
@@ -190,7 +190,7 @@ export class OfficeRoom extends Room {
    * which reuses the SHARED container NPC engine (built on buildOfficeMap). Falls
    * back to the ground floor for custom buildings lacking that floor id.
    */
-  private readonly mainOfficeFloorId: string = this.floors.has(MAIN_OFFICE_FLOOR_ID)
+  private mainOfficeFloorId: string = this.floors.has(MAIN_OFFICE_FLOOR_ID)
     ? MAIN_OFFICE_FLOOR_ID
     : this.groundFloorId;
   /** Per-floor ambient NPC engines (each seeded from that floor's geometry). */
@@ -280,6 +280,7 @@ export class OfficeRoom extends Room {
   private onEventCreated?: (event: SocialEvent) => void;
   private onEventUpdated?: (event: SocialEvent) => void;
   private onEventEnded?: (eventId: string) => void;
+  private onMapActivated?: (building: Building) => void;
 
   onCreate(): void {
     this.autoDispose = false;
@@ -529,6 +530,34 @@ export class OfficeRoom extends Room {
       container.presence.tick(Date.now());
     };
     events.on("ended", this.onEventEnded);
+
+    this.onMapActivated = (newBuilding: Building) => {
+      this.building = newBuilding;
+      this.floors.clear();
+      for (const f of newBuilding.floors) {
+        this.floors.set(f.id, f);
+      }
+      this.groundFloorId = (newBuilding.floors.find((f) => f.index === 0) ?? newBuilding.floors[0]).id;
+      this.spawnFloorId = this.floors.has(SPAWN_FLOOR_ID) ? SPAWN_FLOOR_ID : this.groundFloorId;
+      this.mainOfficeFloorId = this.floors.has(MAIN_OFFICE_FLOOR_ID) ? MAIN_OFFICE_FLOOR_ID : this.groundFloorId;
+
+      log.info("active building updated live across all sessions", {
+        buildingId: newBuilding.id,
+        floors: newBuilding.floors.length,
+      });
+
+      const summary: BuildingSummary = {
+        id: newBuilding.id,
+        name: newBuilding.name,
+        floors: newBuilding.floors.map((f) => ({ id: f.id, name: f.name, index: f.index })),
+      };
+
+      this.broadcast(S2C.BUILDING_UPDATED, {
+        activeBuildingId: newBuilding.id,
+        building: summary,
+      });
+    };
+    container.maps.on("map-activated", this.onMapActivated);
   }
 
   // -------------------------------------------------------------------------
@@ -721,6 +750,7 @@ export class OfficeRoom extends Room {
     if (this.onEventCreated) events.off("created", this.onEventCreated);
     if (this.onEventUpdated) events.off("updated", this.onEventUpdated);
     if (this.onEventEnded) events.off("ended", this.onEventEnded);
+    if (this.onMapActivated) container.maps.off("map-activated", this.onMapActivated);
 
     if (container.registry.room === this) {
       container.registry.room = null;
