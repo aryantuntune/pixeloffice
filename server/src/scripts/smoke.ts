@@ -82,15 +82,17 @@ async function main(): Promise<void> {
   const client = new Client(ENDPOINT);
 
   const jwtSecret = process.env.JWT_SECRET;
-  const jwt = new JwtService(jwtSecret ? { secret: jwtSecret } : {});
-  const token = jwt.sign({
-    sub: "smoke-user-id",
-    email: "smoke@pixeloffice.test",
-    name: "Smoke",
-    department: "Engineering",
-    role: "superadmin",
-  });
-  const optsA: JoinOptions = { name: "Smoke", department: "Engineering", avatarId: "emerald", token };
+  const jwt = jwtSecret ? new JwtService({ secret: jwtSecret }) : null;
+  const token = jwt
+    ? jwt.sign({
+        sub: "smoke-user-id",
+        email: "smoke@pixeloffice.test",
+        name: "Smoke",
+        department: "Engineering",
+        role: "superadmin",
+      })
+    : undefined;
+  const optsA: JoinOptions = { name: "Smoke", department: "Engineering", avatarId: "emerald", ...(token ? { token } : {}) };
   const roomA: Room = await client.joinOrCreate(ROOM_NAME, optsA);
 
   // Set up collectors before sending anything.
@@ -145,14 +147,16 @@ async function main(): Promise<void> {
   const joinedA = collector<PlayerJoinedPayload>(roomA, S2C.PLAYER_JOINED);
 
   const clientB = new Client(ENDPOINT);
-  const tokenB = jwt.sign({
-    sub: "smoke-buddy-id",
-    email: "buddy@pixeloffice.test",
-    name: "Buddy",
-    department: "Product",
-    role: "member",
-  });
-  const optsB: JoinOptions = { name: "Buddy", department: "Product", avatarId: "ruby", token: tokenB };
+  const tokenB = jwt
+    ? jwt.sign({
+        sub: "smoke-buddy-id",
+        email: "buddy@pixeloffice.test",
+        name: "Buddy",
+        department: "Product",
+        role: "member",
+      })
+    : undefined;
+  const optsB: JoinOptions = { name: "Buddy", department: "Product", avatarId: "ruby", ...(tokenB ? { token: tokenB } : {}) };
   const roomB: Room = await clientB.joinOrCreate(ROOM_NAME, optsB);
 
   const movedB = collector<PlayerMovedPayload>(roomB, S2C.PLAYER_MOVED);
@@ -213,7 +217,7 @@ async function main(): Promise<void> {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${token}`,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ type: "COFFEE_BREAK" }),
     });
@@ -270,7 +274,7 @@ async function main(): Promise<void> {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${token}`,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ title: "Smoke Standup" }),
     });
@@ -293,14 +297,16 @@ async function main(): Promise<void> {
     const { building } = (await resp.json()) as { building: BuildingJSON };
 
     const clientC = new Client(ENDPOINT);
-    const tokenC = jwt.sign({
-      sub: "smoke-lift-id",
-      email: "lift@pixeloffice.test",
-      name: "Lift",
-      department: "HR",
-      role: "member",
-    });
-    const optsC: JoinOptions = { name: "Lift", department: "HR", avatarId: "violet", token: tokenC };
+    const tokenC = jwt
+      ? jwt.sign({
+          sub: "smoke-lift-id",
+          email: "lift@pixeloffice.test",
+          name: "Lift",
+          department: "HR",
+          role: "member",
+        })
+      : undefined;
+    const optsC: JoinOptions = { name: "Lift", department: "HR", avatarId: "violet", ...(tokenC ? { token: tokenC } : {}) };
     const roomC: Room = await clientC.joinOrCreate(ROOM_NAME, optsC);
     const welcomesC = collector<WelcomePayload>(roomC, S2C.WELCOME);
     const floorChangesC = collector<FloorChangedPayload>(roomC, S2C.FLOOR_CHANGED);
