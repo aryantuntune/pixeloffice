@@ -306,7 +306,20 @@ export function mountSettings(parent: HTMLElement, cb: SettingsCallbacks): Setti
 
   const wrap = document.createElement("div");
   wrap.className = "settings-wrap";
-  wrap.append(trigger, pop);
+
+  const toggleBtn = document.createElement("button");
+  toggleBtn.type = "button";
+  toggleBtn.className = "settings-trigger hud-toggle-btn";
+  toggleBtn.setAttribute("aria-label", "Toggle HUD");
+  toggleBtn.textContent = "👁";
+  toggleBtn.title = "Toggle HUD (Full Screen)";
+  toggleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isHidden = parent.classList.toggle("hud-hidden");
+    toggleBtn.textContent = isHidden ? "👁‍🗨" : "👁";
+  });
+
+  wrap.append(toggleBtn, trigger, pop);
   parent.appendChild(wrap);
 
   trigger.addEventListener("click", (e) => {
