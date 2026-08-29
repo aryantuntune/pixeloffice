@@ -46,22 +46,24 @@ jobs:
             set -e
             cd /home/ubuntu/services/pixeloffice
 
-            # Pull fresh image and force-recreate container
-            sudo docker compose pull app
-            sudo docker compose up -d --force-recreate app
+            # Pull fresh image and recreate container
+            sudo podman pull djdiptayan/pixeloffice:latest
+            sudo podman stop pixeloffice-app 2>/dev/null || true
+            sudo podman rm -f pixeloffice-app 2>/dev/null || true
+            sudo podman-compose up -d
 
             # Verify PixelOffice is healthy after redeploy
-            for i in $(seq 1 15); do
+            for i in $(seq 1 20); do
               if curl -sf -o /dev/null http://localhost:2567/api/health; then
                 echo "PixelOffice is up and healthy."
                 break
               fi
-              if [ "$i" -eq 15 ]; then
+              if [ "$i" -eq 20 ]; then
                 echo "PixelOffice did not come up after redeploy" >&2
-                sudo docker logs --tail 50 pixeloffice-app >&2
+                sudo podman logs --tail 50 pixeloffice-app >&2
                 exit 1
               fi
               sleep 2
             done
 
-            sudo docker image prune -f
+            sudo podman image prune -f
