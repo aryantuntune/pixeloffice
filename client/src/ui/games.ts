@@ -100,7 +100,6 @@ export function mountGameOverlay(
       // survive the per-frame re-render (the other games rebuild from scratch).
       if (game.type === "pool") {
         disposePongView();
-        clearInputHandlers(); // pool uses pointer input on the canvas, not keys
         if (!poolView) {
           dialog.innerHTML = "";
           poolView = mountPoolView(dialog, store, callbacks, () => closeAndLeave());
@@ -113,7 +112,6 @@ export function mountGameOverlay(
       // --- PING-PONG: persistent, extrapolating PongView ------------------
       if (game.type === "ping-pong") {
         disposePoolView();
-        clearInputHandlers();
         if (!pongView) {
           dialog.innerHTML = "";
           pongView = mountPongView(dialog, store, callbacks, () => closeAndLeave());
