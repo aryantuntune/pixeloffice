@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CallManager } from "./call-manager";
-import type { RtcCallKind } from "@pixeloffice/shared";
 
 class FakeTrack {
   enabled = true;
@@ -22,8 +21,17 @@ class FakeMediaStream {
     return this.tracks;
   }
 
+  getVideoTracks(): FakeTrack[] {
+    return this.tracks;
+  }
+
   addTrack(track: FakeTrack): void {
     this.tracks.push(track);
+  }
+
+  removeTrack(track: FakeTrack): void {
+    const idx = this.tracks.indexOf(track);
+    if (idx >= 0) this.tracks.splice(idx, 1);
   }
 }
 
@@ -62,13 +70,14 @@ describe("CallManager", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     FakePeerConnection.instances = [];
-    vi.stubGlobal("MediaStream", FakeMediaStream);
-    vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
+    vi.stubGlobal("MediaStream", FakeMediaStream as unknown as typeof MediaStream);
+    vi.stubGlobal("RTCPeerConnection", FakePeerConnection as unknown as typeof RTCPeerConnection);
     vi.stubGlobal("navigator", {
       mediaDevices: {
         getUserMedia: vi.fn(async () => new FakeMediaStream()),
       },
     });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ enabled: false }) })));
   });
 
   afterEach(() => {
@@ -76,37 +85,37 @@ describe("CallManager", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps a call alive during a transient WebRTC disconnected state", async () => {
-    const ended: string[] = [];
-    const active: Array<{ peerId: string; kind: RtcCallKind }> = [];
+  it("keeps a peer alive during a transient WebRTC disconnected state", async () => {
+    const gone: string[] = [];
     const manager = new CallManager({
       selfId: () => "a",
       sendSignal: vi.fn(),
       events: {
         onRemoteStream: vi.fn(),
+        onRemoteGone: (peerId) => gone.push(peerId),
         onLocalStream: vi.fn(),
-        onCallEnded: (peerId) => ended.push(peerId),
-        onCallActive: (peerId, kind) => active.push({ peerId, kind }),
-        onMicState: vi.fn(),
+        onMediaState: vi.fn(),
         onError: vi.fn(),
       },
     });
 
-    await manager.startCall("b", "audio");
+    await manager.join("c1", "audio");
+    await manager.setPeers(["b"]);
+
     const pc = FakePeerConnection.instances[0]!;
+    expect(pc).toBeDefined();
 
     pc.setState("disconnected");
     await vi.advanceTimersByTimeAsync(1_000);
 
-    expect(manager.isInCall("b")).toBe(true);
-    expect(ended).toEqual([]);
+    expect(gone).toEqual([]);
+    expect(pc.close).not.toHaveBeenCalled();
 
     pc.setState("connected");
     await vi.runOnlyPendingTimersAsync();
 
-    expect(manager.isInCall("b")).toBe(true);
-    expect(ended).toEqual([]);
-    expect(active).toContainEqual({ peerId: "b", kind: "audio" });
+    expect(gone).toEqual([]);
+    expect(pc.close).not.toHaveBeenCalled();
   });
 
   it("handles video call with correct getUserMedia constraints", async () => {
@@ -115,21 +124,53 @@ describe("CallManager", () => {
       sendSignal: vi.fn(),
       events: {
         onRemoteStream: vi.fn(),
+        onRemoteGone: vi.fn(),
         onLocalStream: vi.fn(),
-        onCallEnded: vi.fn(),
-        onCallActive: vi.fn(),
-        onMicState: vi.fn(),
+        onMediaState: vi.fn(),
         onError: vi.fn(),
       },
     });
 
     const getUserMediaSpy = vi.spyOn(navigator.mediaDevices, "getUserMedia");
 
-    await manager.startCall("c", "video");
+    await manager.join("c2", "video");
 
     expect(getUserMediaSpy).toHaveBeenCalledWith({
-      audio: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
       video: true,
     });
+  });
+
+  it("reconciles peers: closes departed peers and emits onRemoteGone", async () => {
+    const gone: string[] = [];
+    const manager = new CallManager({
+      selfId: () => "a",
+      sendSignal: vi.fn(),
+      events: {
+        onRemoteStream: vi.fn(),
+        onRemoteGone: (peerId) => gone.push(peerId),
+        onLocalStream: vi.fn(),
+        onMediaState: vi.fn(),
+        onError: vi.fn(),
+      },
+    });
+
+    await manager.join("c1", "audio");
+    await manager.setPeers(["b", "c"]);
+
+    expect(FakePeerConnection.instances.length).toBe(2);
+    const pcB = FakePeerConnection.instances[0]!;
+    const pcC = FakePeerConnection.instances[1]!;
+
+    // Reconcile: peer "b" left, "c" remains
+    await manager.setPeers(["c"]);
+
+    expect(pcB.close).toHaveBeenCalled();
+    expect(pcC.close).not.toHaveBeenCalled();
+    expect(gone).toEqual(["b"]);
   });
 });

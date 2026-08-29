@@ -43,14 +43,16 @@ export const C2S = {
    * SetLocationSyncPayload + S2C.LOCATION + docs/FLOOR-LOCATION-CONTRACT.md.
    */
   SET_LOCATION_SYNC: "set-location-sync",
-  /**
-   * Proximity voice/video CALL CONTROL relayed to one specific co-located peer
-   * (request / accept / reject / hangup / cancel). The server is a dumb relay:
-   * it validates the peer is a same-floor human, swaps `to` for the sender's id,
-   * and forwards as S2C.RTC_CALL. It NEVER logs who-called-whom or call content
-   * (presence, not surveillance). See RtcCallC2S / RtcCallS2C.
-   */
-  RTC_CALL: "rtc-call",
+  /** Ring a player anywhere in the office (or pull them into the call you are in). */
+  CALL_INVITE: "call-invite",
+  /** Answer a ring: accept / reject / switch (drop current) / merge (one call). */
+  CALL_ANSWER: "call-answer",
+  /** Join an OPEN meeting-room call while standing in that room. */
+  CALL_JOIN: "call-join",
+  /** Start a meeting-room call and ring everyone else standing in that room. */
+  CALL_START_ROOM: "call-start-room",
+  /** Leave a call (or cancel a ring you started). */
+  CALL_LEAVE: "call-leave",
   /**
    * Opaque WebRTC SIGNALING (SDP offer/answer + ICE candidates) relayed to one
    * co-located peer. The `data` blob is opaque to the server — media never
@@ -181,8 +183,14 @@ export const S2C = {
    * disable / leave. There is no new C2S message for this.
    */
   FLOOR_SYNC_CODE: "floor-sync-code",
-  /** Relayed proximity call control from a co-located peer (see RtcCallS2C). */
-  RTC_CALL: "rtc-call",
+  /** Someone is calling you (see CallRingS2C). */
+  CALL_RING: "call-ring",
+  /** The roster of the call you are in changed (see CallStateS2C). */
+  CALL_STATE: "call-state",
+  /** A call you were in / invited to is over for you (see CallEndedS2C). */
+  CALL_ENDED: "call-ended",
+  /** The meeting room you are standing in: who is here + any open room call. */
+  ROOM_CALL: "room-call",
   /** Relayed WebRTC signaling from a co-located peer (see RtcSignalS2C). */
   RTC_SIGNAL: "rtc-signal",
   /** Full current state of a whiteboard, sent to a client when it opens one. */
@@ -395,49 +403,103 @@ export interface GameUpdatePayload {
   game: ActiveGame;
 }
 
-// ----------------------------- proximity calls -----------------------------
-// Proximity voice/video over P2P WebRTC. The server relays ONLY signaling +
-// call control between same-floor peers; media is peer-to-peer and never
-// touches the server. Backward-compatible additive messages: a pre-call client
-// simply never sends/handles them (and the room's "*" handler tolerates the
-// C2S types the other direction).
+// ------------------------------- calls -------------------------------------
+// Voice/video CALL SESSIONS. A session is a roster (participants + pending
+// invites), owned by the server, reachable from anywhere in the office (no
+// distance/floor gate). Media never touches the game server: it flows over
+// LiveKit when configured, else a P2P mesh signalled through RTC_SIGNAL.
+// PRIVACY (Constitution): the server never logs who called whom, for how long,
+// or anything about call content.
 
-/** What media a proximity call carries. */
+/** What media a call carries. */
 export type RtcCallKind = "audio" | "video";
 
-/**
- * Call lifecycle control signals:
- *   - request: caller asks a nearby peer to start a call (peer accepts/rejects).
- *   - accept : callee agreed — both sides begin WebRTC negotiation.
- *   - reject : callee declined.
- *   - cancel : caller withdrew the request before it was answered.
- *   - hangup : either side ended an established call.
- */
-export type RtcCallAction = "request" | "accept" | "reject" | "cancel" | "hangup";
-
-/** C2S: proximity call control aimed at a specific co-located peer. */
-export interface RtcCallC2S {
-  /** Target peer's sessionId (must be a same-floor human). */
-  to: string;
-  kind: RtcCallKind;
-  action: RtcCallAction;
+/** A participant as the UI needs it (name resolved server-side). */
+export interface CallParticipantInfo {
+  sessionId: string;
+  name: string;
 }
 
-/** S2C: relayed call control, with the originator identified for the UI card. */
-export interface RtcCallS2C {
-  /** Originating peer's sessionId. */
+export interface CallInviteC2S {
+  /** Target player's sessionId (any floor, must be a human). */
+  to: string;
+  kind: RtcCallKind;
+}
+
+/**
+ * accept — take the call (only valid when you are not already in one)
+ * reject — decline
+ * switch — leave your current call, then take this one
+ * merge  — fold this call's people into the call you are already in
+ */
+export type CallAnswer = "accept" | "reject" | "switch" | "merge";
+
+export interface CallAnswerC2S {
+  callId: string;
+  answer: CallAnswer;
+}
+
+export interface CallJoinC2S {
+  callId: string;
+}
+
+export interface CallStartRoomC2S {
+  /** Meeting-room area name the sender is standing in. */
+  roomName: string;
+  kind: RtcCallKind;
+}
+
+export interface CallLeaveC2S {
+  callId: string;
+}
+
+export interface CallRingS2C {
+  callId: string;
   from: string;
-  /** Originator display name (so the incoming-call card reads "Alice is calling"). */
   fromName: string;
   kind: RtcCallKind;
-  action: RtcCallAction;
+  /** Who is already in that call (so the card can read "Alice + 2 others"). */
+  participants: CallParticipantInfo[];
 }
 
-/** C2S: opaque WebRTC signaling blob relayed to a co-located peer. */
+export interface CallStateS2C {
+  callId: string;
+  kind: RtcCallKind;
+  /** Everyone who has joined, including the recipient. */
+  participants: CallParticipantInfo[];
+  /** Invited, not yet answered (the caller's "Ringing…" line). */
+  pending: CallParticipantInfo[];
+  /** Set when this call is bound to a meeting room (open to that room's occupants). */
+  roomName?: string;
+}
+
+export type CallEndReason = "left" | "rejected" | "cancelled" | "empty";
+
+export interface CallEndedS2C {
+  callId: string;
+  reason: CallEndReason;
+}
+
+/**
+ * The meeting room the RECIPIENT is standing in (per-recipient, not a broadcast).
+ * `roomName: null` means "not in a meeting room" and clears the client's card.
+ */
+export interface RoomCallS2C {
+  roomName: string | null;
+  floorId: string | null;
+  /** Humans currently standing in that room, including the recipient. */
+  occupants: CallParticipantInfo[];
+  /** The open call bound to this room, or null when nobody started one. */
+  callId: string | null;
+  kind?: RtcCallKind;
+  /** True when the recipient is already a participant of `callId`. */
+  joined: boolean;
+}
+
+/** C2S: opaque WebRTC signaling blob relayed to a peer in the SAME call. */
 export interface RtcSignalC2S {
-  /** Target peer's sessionId. */
   to: string;
-  /** Opaque to the server: `{ sdp }` (offer/answer) or `{ candidate }` (ICE). */
+  /** Opaque to the server: `{ sdp }` or `{ candidate }`. */
   data: unknown;
 }
 

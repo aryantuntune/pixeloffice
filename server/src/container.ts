@@ -37,6 +37,7 @@ import {
 } from "./auth/google-token.store";
 import { EventService } from "./events/event.service";
 import { WhiteboardService } from "./whiteboard/whiteboard.service";
+import { CallService } from "./calls/call.service";
 import { PresenceService } from "./presence/presence.service";
 import type { HrAdapter } from "./integrations/hr/hr-adapter";
 import { GreytHrEssAttendanceAdapter } from "./integrations/hr/greythr-ess-attendance.adapter";
@@ -117,6 +118,13 @@ const events = new EventService();
 const presence = new PresenceService(calendar, events);
 // Per-department collaborative whiteboards (in-memory; cleared on restart).
 const whiteboard = new WhiteboardService();
+
+// Call sessions (voice/video). The cap depends on transport: LiveKit routes N
+// streams server-side, a P2P mesh does not scale past ~4.
+const livekitEnabled = Boolean(
+  process.env.LIVEKIT_URL && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET,
+);
+const calls = new CallService({ maxParticipants: livekitEnabled ? 12 : 4 });
 
 // --- Multi-floor building / map repository ---------------------------------
 // Source of the ACTIVE building (a stack of floors). The room reads the active
@@ -251,6 +259,8 @@ export const container = {
   presence,
   /** Per-department collaborative whiteboards (in-memory stroke store). */
   whiteboard,
+  /** Call sessions (voice/video conferences and meeting-room calls). */
+  calls,
   /** Ambient office NPCs (framework-free; the room wires effects to the wire). */
   npcs,
   /** Active building + saved maps (the room reads the active building at create). */

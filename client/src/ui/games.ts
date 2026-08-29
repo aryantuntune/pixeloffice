@@ -13,6 +13,14 @@ import {
   POOL_POCKET_R,
   POOL_POCKETS,
   POOL_AI_SESSION_ID,
+  PONG_COURT_W,
+  PONG_COURT_H,
+  PONG_BALL_R,
+  PONG_PADDLE_W,
+  PONG_PADDLE_H,
+  PONG_PADDLE_1_FACE,
+  PONG_PADDLE_2_FACE,
+  PONG_WIN_SCORE,
 } from "@pixeloffice/shared";
 import type { Store } from "./state";
 import type { HudCallbacks } from "./hud";
@@ -59,60 +67,26 @@ export function mountGameOverlay(
   dialog.showModal();
 
   let activeGameId: string | null = null;
-  let lastPongDir: "up" | "down" | "stop" = "stop";
-  let activeHandlers: (() => void)[] = [];
   let poolView: PoolView | null = null;
-
+  let pongView: PongView | null = null;
   function closeAndLeave() {
     if (activeGameId) {
       callbacks.onLeaveGame(activeGameId);
     }
   }
 
-  function setupPongInput(gameId: string, _role: "player1" | "player2") {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      let dir: "up" | "down" | null = null;
-      if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") {
-        dir = "up";
-      } else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") {
-        dir = "down";
-      }
-
-      if (dir && dir !== lastPongDir) {
-        lastPongDir = dir;
-        callbacks.onGameInput(gameId, { dir });
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (
-        (e.key === "ArrowUp" || e.key === "w" || e.key === "W") && lastPongDir === "up" ||
-        (e.key === "ArrowDown" || e.key === "s" || e.key === "S") && lastPongDir === "down"
-      ) {
-        lastPongDir = "stop";
-        callbacks.onGameInput(gameId, { dir: "stop" });
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-
-    activeHandlers.push(() => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    });
-  }
-
-  function clearInputHandlers() {
-    for (const dispose of activeHandlers) dispose();
-    activeHandlers = [];
-    lastPongDir = "stop";
-  }
 
   function disposePoolView() {
     if (poolView) {
       poolView.destroy();
       poolView = null;
+    }
+  }
+
+  function disposePongView() {
+    if (pongView) {
+      pongView.destroy();
+      pongView = null;
     }
   }
 
@@ -125,6 +99,7 @@ export function mountGameOverlay(
       // Pool owns its own DOM subtree + canvas + animation loop, so it must
       // survive the per-frame re-render (the other games rebuild from scratch).
       if (game.type === "pool") {
+        disposePongView();
         clearInputHandlers(); // pool uses pointer input on the canvas, not keys
         if (!poolView) {
           dialog.innerHTML = "";
@@ -135,23 +110,27 @@ export function mountGameOverlay(
       }
       disposePoolView();
 
+      // --- PING-PONG: persistent, extrapolating PongView ------------------
+      if (game.type === "ping-pong") {
+        disposePoolView();
+        clearInputHandlers();
+        if (!pongView) {
+          dialog.innerHTML = "";
+          pongView = mountPongView(dialog, store, callbacks, () => closeAndLeave());
+        }
+        pongView.update(game);
+        return;
+      }
+      disposePongView();
+
       const isPlayer1 = game.player1?.sessionId === selfId;
       const isPlayer2 = game.player2?.sessionId === selfId;
       const myRole = isPlayer1 ? "player1" : isPlayer2 ? "player2" : null;
 
-      // If playing pong and handlers are empty, set them up
-      if (game.type === "ping-pong" && game.status === "playing" && myRole && activeHandlers.length === 0) {
-        setupPongInput(game.id, myRole);
-      } else if (game.status !== "playing" || !myRole) {
-        clearInputHandlers();
-      }
-
       // Title & Header details
       let titleStr = "";
-      if (game.type === "ping-pong") titleStr = "Table Tennis (Pong)";
-      else if (game.type === "tic-tac-toe") titleStr = "Tic-Tac-Toe";
+      if (game.type === "tic-tac-toe") titleStr = "Tic-Tac-Toe";
       else if (game.type === "connect-four") titleStr = "Connect Four";
-
       dialog.innerHTML = "";
 
       const header = document.createElement("div");
@@ -212,48 +191,8 @@ export function mountGameOverlay(
         const turnInfo = document.createElement("div");
         turnInfo.className = "game-turn-info";
 
-        if (game.type === "ping-pong") {
-          turnInfo.textContent = "Use Arrow Keys or W/S to move paddle!";
-          content.appendChild(turnInfo);
-
-          const canvas = document.createElement("canvas");
-          canvas.width = 600;
-          canvas.height = 400;
-          canvas.className = "pong-canvas";
-          content.appendChild(canvas);
-
-          const ctx = canvas.getContext("2d");
-          if (ctx && game.state) {
-            const state = game.state as PongState;
-            ctx.fillStyle = "#0e1116";
-            ctx.fillRect(0, 0, 600, 400);
-
-            // Draw dashed center line
-            ctx.strokeStyle = "rgba(230, 236, 242, 0.15)";
-            ctx.lineWidth = 4;
-            ctx.setLineDash([10, 10]);
-            ctx.beginPath();
-            ctx.moveTo(300, 0);
-            ctx.lineTo(300, 400);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Draw paddles
-            ctx.fillStyle = "#ef6258"; // Player 1 Red
-            ctx.fillRect(20, state.paddle1Y, 10, 80);
-
-            ctx.fillStyle = "#3ecf6e"; // Player 2 Green
-            ctx.fillRect(570, state.paddle2Y, 10, 80);
-
-            // Draw Ball
-            ctx.fillStyle = "#e6ecf2";
-            ctx.beginPath();
-            ctx.arc(state.ballX, state.ballY, 6, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        } else if (game.type === "tic-tac-toe") {
+        if (game.type === "tic-tac-toe") {
           const state = game.state as TicTacToeState;
-          const isMyTurn = state.turn === selfId;
           turnInfo.textContent = isMyTurn ? "Your turn!" : "Opponent's turn...";
           turnInfo.className = `game-turn-info ${isMyTurn ? "active" : ""}`;
           content.appendChild(turnInfo);
@@ -334,6 +273,8 @@ export function mountGameOverlay(
         gameOverDiv.className = "game-over-banner";
 
         const bannerTitle = document.createElement("h3");
+        bannerTitle.className = "game-over-title";
+
         if (game.winnerSessionId === selfId) {
           bannerTitle.textContent = "VICTORY!";
           bannerTitle.style.color = "#3ecf6e";
@@ -345,7 +286,6 @@ export function mountGameOverlay(
           bannerTitle.textContent = "DEFEAT";
           bannerTitle.style.color = "#ef6258";
         }
-
         const statsDiv = document.createElement("div");
         statsDiv.className = "game-over-stats";
         statsDiv.innerHTML = `<p>Final Score: ${game.score1} - ${game.score2}</p>`;
@@ -362,14 +302,262 @@ export function mountGameOverlay(
       dialog.appendChild(content);
     },
     destroy() {
-      clearInputHandlers();
       disposePoolView();
+      disposePongView();
       dialog.close();
       dialog.remove();
     },
   };
 }
 
+// ===========================================================================
+// Table Tennis / Pong view (persistent, smooth extrapolating canvas view).
+// ===========================================================================
+
+interface PongView {
+  /** Apply a fresh ActiveGame snapshot (called on every render). */
+  update(game: ActiveGame): void;
+  /** Tear down the loop + listeners + DOM. */
+  destroy(): void;
+}
+
+function mountPongView(
+  dialog: HTMLElement,
+  store: Store,
+  callbacks: HudCallbacks,
+  leave: () => void,
+): PongView {
+  const header = document.createElement("div");
+  header.className = "game-header";
+  const title = document.createElement("h2");
+  title.id = "game-dialog-title";
+  title.className = "game-title";
+  title.textContent = "Table Tennis (Pong)";
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "game-leave-btn";
+  leaveBtn.textContent = "✕";
+  leaveBtn.title = "Leave Game";
+  leaveBtn.addEventListener("click", leave);
+  header.append(title, leaveBtn);
+
+  const scoreboard = document.createElement("div");
+  scoreboard.className = "game-scoreboard";
+  const p1Div = document.createElement("div");
+  p1Div.className = "game-player-badge p1";
+  const vs = document.createElement("span");
+  vs.className = "game-vs";
+  vs.textContent = "VS";
+  const p2Div = document.createElement("div");
+  p2Div.className = "game-player-badge p2";
+  scoreboard.append(p1Div, vs, p2Div);
+
+  const content = document.createElement("div");
+  content.className = "game-content";
+
+  const turnInfo = document.createElement("div");
+  turnInfo.className = "game-turn-info";
+  turnInfo.textContent = "Use Arrow Keys or W/S to move paddle!";
+
+  const canvas = document.createElement("canvas");
+  canvas.width = PONG_COURT_W;
+  canvas.height = PONG_COURT_H;
+  canvas.className = "pong-canvas";
+
+  const lobby = document.createElement("div");
+  lobby.className = "game-lobby";
+  lobby.innerHTML = `
+    <div class="lobby-spinner"></div>
+    <p class="lobby-text">Waiting for an opponent to join...</p>
+  `;
+
+  const banner = document.createElement("div");
+  banner.className = "game-over-banner";
+
+  dialog.append(header, scoreboard, content);
+
+  let currentGame: ActiveGame | null = null;
+  let snap: PongState | null = null;
+  let snapAt = performance.now();
+  let currPaddle1Y = 160;
+  let currPaddle2Y = 160;
+  let lastPongDir: "up" | "down" | "stop" = "stop";
+  let rafId: number | null = null;
+  let lastStatus: string | null = null;
+  let lastScoreStr = "";
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (!currentGame || currentGame.status !== "playing") return;
+    const selfId = store.get().selfId;
+    const isP1 = currentGame.player1?.sessionId === selfId;
+    const isP2 = currentGame.player2?.sessionId === selfId;
+    if (!isP1 && !isP2) return;
+
+    let dir: "up" | "down" | null = null;
+    if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") {
+      dir = "up";
+    } else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") {
+      dir = "down";
+    }
+
+    if (dir && dir !== lastPongDir) {
+      lastPongDir = dir;
+      callbacks.onGameInput(currentGame.id, { dir });
+    }
+  };
+
+  const handleKeyUp = (e: KeyboardEvent) => {
+    if (!currentGame) return;
+    if (
+      ((e.key === "ArrowUp" || e.key === "w" || e.key === "W") && lastPongDir === "up") ||
+      ((e.key === "ArrowDown" || e.key === "s" || e.key === "S") && lastPongDir === "down")
+    ) {
+      lastPongDir = "stop";
+      callbacks.onGameInput(currentGame.id, { dir: "stop" });
+    }
+  };
+
+  window.addEventListener("keydown", handleKeyDown);
+  window.addEventListener("keyup", handleKeyUp);
+
+  const ctx = canvas.getContext("2d");
+
+  function draw() {
+    if (!ctx) return;
+    const now = performance.now();
+    const t = Math.min(now - snapAt, 100) / 1000;
+
+    const targetP1 = snap?.paddle1Y ?? 160;
+    const targetP2 = snap?.paddle2Y ?? 160;
+    currPaddle1Y += (targetP1 - currPaddle1Y) * 0.25;
+    currPaddle2Y += (targetP2 - currPaddle2Y) * 0.25;
+
+    const isServeFrozen = (snap?.serveIn ?? 0) > 0;
+    const baseBallX = snap?.ballX ?? PONG_COURT_W / 2;
+    const baseBallY = snap?.ballY ?? PONG_COURT_H / 2;
+    const velX = snap?.ballVelX ?? 0;
+    const velY = snap?.ballVelY ?? 0;
+
+    const renderX = isServeFrozen
+      ? PONG_COURT_W / 2
+      : Math.max(PONG_BALL_R, Math.min(PONG_COURT_W - PONG_BALL_R, baseBallX + velX * t));
+    const renderY = isServeFrozen
+      ? PONG_COURT_H / 2
+      : Math.max(PONG_BALL_R, Math.min(PONG_COURT_H - PONG_BALL_R, baseBallY + velY * t));
+
+    ctx.fillStyle = "#0e1116";
+    ctx.fillRect(0, 0, PONG_COURT_W, PONG_COURT_H);
+
+    // Dashed center line
+    ctx.strokeStyle = "rgba(230, 236, 242, 0.15)";
+    ctx.lineWidth = 4;
+    ctx.setLineDash([10, 10]);
+    ctx.beginPath();
+    ctx.moveTo(PONG_COURT_W / 2, 0);
+    ctx.lineTo(PONG_COURT_W / 2, PONG_COURT_H);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Paddles
+    ctx.fillStyle = "#ef6258"; // Player 1 Red
+    ctx.fillRect(PONG_PADDLE_1_FACE - PONG_PADDLE_W, currPaddle1Y, PONG_PADDLE_W, PONG_PADDLE_H);
+
+    ctx.fillStyle = "#3ecf6e"; // Player 2 Green
+    ctx.fillRect(PONG_PADDLE_2_FACE, currPaddle2Y, PONG_PADDLE_W, PONG_PADDLE_H);
+
+    // Ball
+    ctx.fillStyle = "#e6ecf2";
+    ctx.beginPath();
+    ctx.arc(renderX, renderY, PONG_BALL_R, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Serve countdown
+    if (isServeFrozen && snap?.serveIn) {
+      const remainingSec = Math.ceil(snap.serveIn / 1000);
+      ctx.fillStyle = "rgba(230, 236, 242, 0.6)";
+      ctx.font = "bold 24px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`Serve in ${remainingSec}...`, PONG_COURT_W / 2, PONG_COURT_H / 2 - 30);
+    }
+
+    rafId = requestAnimationFrame(draw);
+  }
+
+  rafId = requestAnimationFrame(draw);
+
+  return {
+    update(game: ActiveGame) {
+      currentGame = game;
+      snap = (game.state as PongState) ?? null;
+      snapAt = performance.now();
+
+      const selfId = store.get().selfId;
+      const isPlayer1 = game.player1?.sessionId === selfId;
+      const isPlayer2 = game.player2?.sessionId === selfId;
+
+      const scoreStr = `${game.player1?.name ?? ""}:${game.score1}-${game.score2}:${game.player2?.name ?? ""}`;
+      if (scoreStr !== lastScoreStr) {
+        lastScoreStr = scoreStr;
+        p1Div.className = `game-player-badge p1 ${isPlayer1 ? "self" : ""}`;
+        p1Div.innerHTML = `
+          <span class="game-avatar-icon dept-chip" data-dept="Engineering">${game.player1 ? game.player1.name : "Empty"}</span>
+          <span class="game-score">${game.score1}</span>
+        `;
+
+        p2Div.className = `game-player-badge p2 ${isPlayer2 ? "self" : ""}`;
+        p2Div.innerHTML = `
+          <span class="game-score">${game.score2}</span>
+          <span class="game-avatar-icon dept-chip" data-dept="Design">${game.player2 ? game.player2.name : "Waiting..."}</span>
+        `;
+      }
+
+      if (game.status !== lastStatus) {
+        lastStatus = game.status;
+        content.innerHTML = "";
+
+        if (game.status === "waiting") {
+          content.appendChild(lobby);
+        } else if (game.status === "playing") {
+          content.append(turnInfo, canvas);
+        } else if (game.status === "gameover") {
+          content.appendChild(canvas);
+
+          const isWinner = game.winnerSessionId === selfId;
+          const isLoser = (isPlayer1 || isPlayer2) && !isWinner && game.winnerSessionId !== null;
+          const isDraw = game.winnerSessionId === null;
+
+          banner.className = `game-over-banner ${isWinner ? "winner" : isLoser ? "loser" : "draw"}`;
+          const titleText = isWinner ? "🏆 VICTORY!" : isLoser ? "💀 DEFEAT" : isDraw ? "🤝 DRAW!" : "🏁 GAME OVER";
+          const winnerName = game.winnerSessionId === game.player1?.sessionId ? game.player1?.name : game.player2?.name;
+          const subtitleText = isWinner
+            ? "You won the match!"
+            : isLoser
+            ? "Better luck next time!"
+            : isDraw
+            ? "It's a tie!"
+            : `${winnerName ?? "Someone"} won!`;
+
+          banner.innerHTML = `
+            <h3 class="game-over-title">${titleText}</h3>
+            <p class="game-over-subtitle">${subtitleText}</p>
+          `;
+          content.appendChild(banner);
+        }
+      }
+    },
+    destroy() {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      header.remove();
+      scoreboard.remove();
+      content.remove();
+    },
+  };
+}
 // ===========================================================================
 // 8-Ball Pool view (server-authoritative; this is rendering + input ONLY).
 //

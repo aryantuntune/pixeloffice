@@ -14,6 +14,7 @@ import type {
   SocialEvent,
   ActiveGame,
   BuildingSummary,
+  RoomCallS2C,
 } from "@pixeloffice/shared";
 
 export interface UiState {
@@ -46,6 +47,8 @@ export interface UiState {
    * re-seeded). Absent floor data is treated as the ground floor by consumers.
    */
   selfFloorId: string | null;
+  /** The meeting room the local user is currently standing in, plus open call info. */
+  roomCall: RoomCallS2C | null;
 }
 
 type Listener = (state: UiState) => void;
@@ -68,6 +71,7 @@ export class Store {
       interactGameId: null,
       building: null,
       selfFloorId: null,
+      roomCall: null,
     };
   }
 
@@ -211,6 +215,11 @@ export class Store {
    */
   setSelfFloor(floorId: string | null): void {
     this.state.selfFloorId = floorId;
+    this.emit();
+  }
+
+  setRoomCall(p: RoomCallS2C | null): void {
+    this.state.roomCall = p;
     this.emit();
   }
 

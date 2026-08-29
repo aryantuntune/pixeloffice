@@ -3997,6 +3997,17 @@ body.reduced-motion *::after {
   transform: scale(0.97);
 }
 
+.profile-call-btns {
+  display: flex;
+  gap: var(--sp-2, 8px);
+  width: 100%;
+  margin-top: 4px;
+}
+.profile-call-btn {
+  flex: 1;
+  margin-top: 0;
+}
+
 /* --------------------------- Roster ⓘ button ---------------------------- */
 
 .roster-row {
@@ -4468,11 +4479,10 @@ body.reduced-motion *::after {
 }
 
 /* ---------------------------------------------------------------------------
-   Proximity voice/video calls. Docked bottom-center, above the chat bar. The
-   prompt (Speak/Video) appears within 2 tiles of a peer; the incoming card and
-   active panel replace it during a call. Mic/cam are off until a call connects.
+   Call panel & Conference dock. Docked bottom-center, above the chat bar.
+   Carries ring cards (Switch/Merge/Reject) and multi-party video/audio tiles.
    --------------------------------------------------------------------------- */
-.prox-call {
+.call-root {
   position: fixed;
   left: 50%;
   bottom: 84px;
@@ -4483,26 +4493,15 @@ body.reduced-motion *::after {
   gap: var(--sp-2);
   pointer-events: none;
 }
-.prox-call > * {
+.call-root > * {
   pointer-events: auto;
 }
-/* The sections set an explicit `display`, which would otherwise override the
-   `hidden` attribute's UA `display:none`. These attribute selectors match that
-   specificity so toggling `.hidden` actually hides them (the controller relies
-   on this to stay invisible when you are alone / not in a call). */
-.prox-call[hidden],
-.prox-prompt[hidden],
-.prox-incoming[hidden],
-.prox-panel[hidden],
-.prox-preview[hidden],
-.prox-tiles[hidden] {
+.call-root:empty {
   display: none;
 }
 
-.prox-prompt,
-.prox-incoming,
-.prox-panel,
-.prox-preview {
+.call-ring,
+.call-panel {
   background: linear-gradient(180deg, rgba(24, 32, 44, 0.88), rgba(16, 21, 29, 0.92));
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--r-md);
@@ -4517,19 +4516,139 @@ body.reduced-motion *::after {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.prox-prompt {
+.call-ring {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 260px;
+}
+.call-ring-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.call-ring-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+.call-ring-sub {
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+.call-ring-btns {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+.call-ring-btns .call-btn {
+  flex: 1;
+}
+
+.call-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 280px;
+  max-width: 480px;
+}
+.call-panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.call-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+.call-pending {
+  font-size: 12px;
+  color: var(--c-text-muted);
+  font-style: italic;
+}
+
+.call-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--sp-2);
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--c-bg-0);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1);
+}
+.call-tile {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: var(--r-xs);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.call-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.call-tile-name {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Audio-only call: collapse video boxes to name chips */
+.call-tiles.is-audio {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  max-height: 120px;
+  background: transparent;
+  padding: 0;
+}
+.call-tiles.is-audio .call-tile {
+  aspect-ratio: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--c-line);
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+}
+.call-tiles.is-audio .call-tile video {
+  display: none;
+}
+.call-tiles.is-audio .call-tile-name {
+  position: static;
+  background: none;
+  padding: 0;
+  color: var(--c-text);
+  font-size: 12px;
+}
+
+.call-controls {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  margin-top: var(--sp-1);
 }
-.prox-prompt-name {
-  font-size: 13px;
-  color: var(--c-text-muted);
-  margin-right: var(--sp-1);
-  white-space: nowrap;
+.call-controls .call-btn-hangup {
+  margin-left: auto;
 }
 
-.prox-btn {
+.call-btn {
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -4542,27 +4661,25 @@ body.reduced-motion *::after {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   transition: background var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow 0.15s ease, filter 0.15s ease;
 }
-.prox-btn:hover {
+.call-btn:hover {
   background: rgba(42, 54, 72, 0.9);
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
 }
-.prox-btn:active { transform: translateY(0) scale(0.97); }
-.prox-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.call-btn:active { transform: translateY(0) scale(0.97); }
+.call-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-.prox-btn-audio,
-.prox-btn-accept {
+.call-btn-accept {
   background: linear-gradient(135deg, #4ad97d, #3ecf6e);
   color: #07200f;
   border-color: transparent;
   box-shadow: 0 0 14px rgba(62, 207, 110, 0.35);
 }
-.prox-btn-audio:hover,
-.prox-btn-accept:hover {
+.call-btn-accept:hover {
   filter: brightness(1.1);
   box-shadow: 0 0 18px rgba(62, 207, 110, 0.5);
 }
-.prox-btn-video {
+.call-btn-switch {
   background: linear-gradient(135deg, #3d84ee, #2e6fd8);
   color: #fff;
   border-color: transparent;
@@ -4572,107 +4689,81 @@ body.reduced-motion *::after {
   filter: brightness(1.1);
   box-shadow: 0 0 18px rgba(46, 111, 216, 0.5);
 }
-.prox-btn-reject,
-.prox-btn-hangup {
+.call-btn-switch:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 18px rgba(46, 111, 216, 0.5);
+}
+.call-btn-merge {
+  background: linear-gradient(135deg, #4ad97d, #3ecf6e);
+  color: #07200f;
+  border-color: transparent;
+  box-shadow: 0 0 14px rgba(62, 207, 110, 0.35);
+}
+.call-btn-merge:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 18px rgba(62, 207, 110, 0.5);
+}
+.call-btn-reject,
+.call-btn-hangup {
   background: linear-gradient(135deg, #ef6258, #e5544b);
   color: #fff;
   border-color: transparent;
   box-shadow: 0 0 12px rgba(229, 84, 75, 0.35);
 }
-.prox-btn-reject:hover,
-.prox-btn-hangup:hover {
+.call-btn-reject:hover,
+.call-btn-hangup:hover {
   filter: brightness(1.1);
   box-shadow: 0 0 18px rgba(229, 84, 75, 0.5);
 }
-.prox-btn-mute.is-muted {
+.call-btn-mic.is-muted,
+.call-btn-cam.is-off {
   background: var(--c-warn);
   color: #1c1305;
   border-color: transparent;
 }
 
-.prox-incoming { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 230px; }
-.prox-incoming-text { font-size: 14px; font-weight: 600; }
-.prox-incoming-btns { display: flex; gap: var(--sp-2); }
-.prox-incoming-btns .prox-btn { flex: 1; }
-
-.prox-panel { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 250px; }
-.prox-panel-title { font-size: 13px; font-weight: 600; color: var(--c-text); }
-.prox-tiles {
-  position: relative;
-  display: flex;
-  justify-content: center;
-  background: var(--c-bg-0);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-}
-.prox-video { background: #000; display: block; }
-.prox-remote {
-  width: 320px;
-  max-width: 60vw;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  border-radius: var(--r-sm);
-}
-.prox-local {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 88px;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: var(--r-xs);
-  box-shadow: var(--shadow);
-}
-.prox-controls { display: flex; align-items: center; gap: var(--sp-2); }
-.prox-calling { font-size: 13px; color: var(--c-text-muted); flex: 1; }
-.prox-controls .prox-btn-hangup { margin-left: auto; }
-
-.prox-preview {
+/* Meeting room quick call panel in HUD sidebar */
+.hud-room-call {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  min-width: 250px;
-  align-items: center;
 }
-.prox-preview-title {
-  font-size: 13px;
+.room-call-head {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--c-text);
-  margin-bottom: var(--sp-1);
+  color: var(--c-accent);
 }
-.prox-preview-video {
-  width: 220px;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  background: #000;
-  display: block;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+.room-call-people {
+  font-size: 12px;
+  color: var(--c-text-muted);
+  line-height: 1.4;
 }
-.prox-preview-countdown {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--c-warn);
-  background: rgba(232, 161, 60, 0.12);
-  border: 1px solid rgba(232, 161, 60, 0.3);
-  padding: 4px 10px;
-  border-radius: 999px;
-}
-.prox-preview-btns {
+.room-call-btns {
   display: flex;
-  gap: var(--sp-2);
-  width: 100%;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
 }
-.prox-preview-btns .prox-btn {
-  flex: 1;
+.room-call-btn {
+  width: 100%;
+  justify-content: center;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.room-call-btn-join {
+  background: var(--c-accent);
+  color: var(--c-accent-ink);
+}
+.room-call-status {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--c-text-muted);
+  padding: 4px 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .prox-prompt, .prox-incoming, .prox-panel, .prox-preview { animation: none; }
+  .call-ring, .call-panel { animation: none; }
 }
-
 /* ---------------------------------------------------------------------------
    Per-department whiteboard. A launcher pill (top-left, under the top bar) opens
    a modal with a shared canvas + department tabs. Drawing syncs per stroke.
