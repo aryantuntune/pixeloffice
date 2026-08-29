@@ -73,8 +73,17 @@ async function readSsidLinux() {
 }
 
 async function readSsidMac() {
-  // Newer macOS deprecated the airport CLI. Try a few sources, take the first hit.
-  // 1) Legacy airport -I (works on older macOS).
+  // 1) networksetup -getairportnetwork (works cleanly across macOS Sonoma, Sequoia, and older).
+  const ports = await tryExec("networksetup", ["-listallhardwareports"]);
+  const portMatch = ports.match(/Hardware Port:\s*Wi-Fi\s*\nDevice:\s*(en\d+)/i);
+  const wifiIface = portMatch ? portMatch[1] : "en0";
+  const netOut = await tryExec("networksetup", ["-getairportnetwork", wifiIface]);
+  const netMatch = netOut.match(/Current Wi-Fi Network:\s*(.+)$/m);
+  if (netMatch && netMatch[1].trim() && !/not associated/i.test(netMatch[1])) {
+    return netMatch[1].trim();
+  }
+
+  // 2) Legacy airport -I (works on older macOS).
   const airport = await tryExec(
     "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport",
     ["-I"]
@@ -82,12 +91,12 @@ async function readSsidMac() {
   const airportMatch = airport.match(/^\s*SSID:\s*(.+)$/m);
   if (airportMatch && airportMatch[1].trim()) return airportMatch[1].trim();
 
-  // 2) system_profiler SPAirPortDataType (newer; "Current Network Information:" block).
+  // 3) system_profiler SPAirPortDataType.
   const sp = await tryExec("system_profiler", ["SPAirPortDataType"]);
   const spMatch = sp.match(/Current Network Information:\s*\n\s*(.+?):\s*\n/);
   if (spMatch && spMatch[1].trim()) return spMatch[1].trim();
 
-  // 3) wdutil info (very new macOS; may require sudo, so best-effort).
+  // 4) wdutil info.
   const wd = await tryExec("wdutil", ["info"]);
   const wdMatch = wd.match(/^\s*SSID\s*:\s*(.+)$/m);
   if (wdMatch) {
