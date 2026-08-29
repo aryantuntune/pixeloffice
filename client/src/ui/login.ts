@@ -388,6 +388,11 @@ export function createLogin(opts: LoginOptions): LoginHandle {
   gtIdInput.type = "text";
   gtIdInput.autocomplete = "username";
   gtIdInput.placeholder = "e.g. KCC00000";
+  try {
+    gtIdInput.value = localStorage.getItem("pixeloffice.greythr.loginId") ?? "";
+  } catch {
+    gtIdInput.value = "";
+  }
   gtIdLabel.appendChild(gtIdInput);
 
   const gtPwLabel = document.createElement("label");
@@ -397,6 +402,11 @@ export function createLogin(opts: LoginOptions): LoginHandle {
   gtPwInput.className = "login-input";
   gtPwInput.type = "password";
   gtPwInput.autocomplete = "current-password";
+  try {
+    gtPwInput.value = localStorage.getItem("pixeloffice.greythr.password") ?? "";
+  } catch {
+    gtPwInput.value = "";
+  }
   gtPwLabel.appendChild(gtPwInput);
 
   const gtError = document.createElement("div");
@@ -440,6 +450,12 @@ export function createLogin(opts: LoginOptions): LoginHandle {
         gtError.textContent = result.error;
         setGreytHrBusy(false);
         return;
+      }
+      try {
+        localStorage.setItem("pixeloffice.greythr.loginId", loginId);
+        localStorage.setItem("pixeloffice.greythr.password", password);
+      } catch {
+        /* best-effort */
       }
       storeToken(result.token);
       const department: Department = (DEPARTMENTS as readonly string[]).includes(

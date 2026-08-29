@@ -502,6 +502,8 @@ export class OfficeScene extends Phaser.Scene {
   private applyDepth(a: Avatar): void {
     a.sprite.setDepth(DEPTH_ENTITY_BASE + a.sprite.y);
     a.shadow.setDepth(DEPTH_ENTITY_BASE + a.sprite.y - 1);
+    a.nameTag.setDepth(DEPTH_OVERLAY + a.sprite.y);
+    a.badge.setDepth(DEPTH_OVERLAY + a.sprite.y);
   }
 
   private applyFacing(a: Avatar): void {

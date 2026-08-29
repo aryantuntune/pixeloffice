@@ -32,7 +32,7 @@ import type { Store } from "./state";
 import { CallManager } from "../rtc/call-manager";
 
 /** Per-peer call lifecycle as the UI sees it. */
-type CallPhase = "idle" | "outgoing" | "incoming" | "active";
+type CallPhase = "idle" | "outgoing" | "incoming" | "active" | "preview";
 interface CallState {
   peerId: string;
   peerName: string;
@@ -69,6 +69,10 @@ export function mountProximityCall(
   let nearest: { id: string; name: string } | null = null;
   // Remembers the kind a peer requested so we can answer with the right media.
   const requestedKind = new Map<string, RtcCallKind>();
+
+  let previewStream: MediaStream | null = null;
+  let previewTimer: ReturnType<typeof setInterval> | null = null;
+  let previewCountdownVal = 2;
 
   // --- DOM -----------------------------------------------------------------
   const root = document.createElement("div");
@@ -145,7 +149,41 @@ export function mountProximityCall(
   controls.append(callingLabel, btnMute, btnHangup);
   panel.append(panelTitle, tiles, controls);
 
-  root.append(prompt, incoming, panel);
+  // Video preview container
+  const preview = document.createElement("div");
+  preview.className = "prox-preview";
+  const previewTitle = document.createElement("div");
+  previewTitle.className = "prox-preview-title";
+  previewTitle.textContent = "Accept Video Call?";
+  
+  const previewVideo = document.createElement("video");
+  previewVideo.className = "prox-preview-video";
+  previewVideo.autoplay = true;
+  previewVideo.playsInline = true;
+  previewVideo.muted = true;
+  previewVideo.setAttribute("playsinline", "true");
+  previewVideo.setAttribute("webkit-playsinline", "true");
+  previewVideo.setAttribute("muted", "true");
+  
+  const previewCountdown = document.createElement("div");
+  previewCountdown.className = "prox-preview-countdown";
+  previewCountdown.textContent = "Starting in 2s...";
+  
+  const previewBtns = document.createElement("div");
+  previewBtns.className = "prox-preview-btns";
+  const btnStartVideo = document.createElement("button");
+  btnStartVideo.className = "prox-btn prox-btn-accept";
+  btnStartVideo.type = "button";
+  btnStartVideo.textContent = "Start Video";
+  const btnStopVideo = document.createElement("button");
+  btnStopVideo.className = "prox-btn prox-btn-reject";
+  btnStopVideo.type = "button";
+  btnStopVideo.textContent = "Voice Only";
+  
+  previewBtns.append(btnStartVideo, btnStopVideo);
+  preview.append(previewTitle, previewVideo, previewCountdown, previewBtns);
+
+  root.append(prompt, incoming, preview, panel);
   parent.appendChild(root);
 
   // --- CallManager (WebRTC plumbing) --------------------------------------
@@ -173,10 +211,14 @@ export function mountProximityCall(
         if (!call || call.peerId !== peerId) return;
         call.phase = "active";
         call.kind = kind;
-        // The user consented to this conversation (called or accepted), so
-        // unmute on connect — "unmute and speak" (spec 1a). The Mute button
-        // then lets them silence themselves at will.
-        manager.setMicEnabled(peerId, true);
+        let micPref = true;
+        try {
+          const storedMic = localStorage.getItem("pixeloffice.mic.enabled");
+          if (storedMic !== null) {
+            micPref = storedMic === "true";
+          }
+        } catch {}
+        manager.setMicEnabled(peerId, micPref);
         render();
       },
       onCallEnded: (peerId) => {
@@ -194,11 +236,50 @@ export function mountProximityCall(
     },
   });
 
+  function clearPreview(): void {
+    if (previewTimer) {
+      clearInterval(previewTimer);
+      previewTimer = null;
+    }
+    if (previewStream) {
+      for (const track of previewStream.getTracks()) {
+        track.stop();
+      }
+      previewStream = null;
+    }
+    previewVideo.srcObject = null;
+  }
+
+  function startPreConnection(chosenKind: RtcCallKind): void {
+    if (!call || call.phase !== "preview") return;
+    const { peerId } = call;
+    clearPreview();
+    call.phase = "active";
+    call.kind = chosenKind;
+    try {
+      localStorage.setItem("pixeloffice.camera.enabled", chosenKind === "video" ? "true" : "false");
+    } catch {}
+    deps.sendCall({ to: peerId, kind: chosenKind, action: "accept" });
+    // Both sides begin negotiation on accept; CallManager's polite/impolite
+    // split decides who actually offers (glare-free).
+    void manager.startCall(peerId, chosenKind);
+    render();
+  }
+
   // --- user actions --------------------------------------------------------
   function placeCall(kind: RtcCallKind): void {
     if (!nearest || call) return;
-    call = { peerId: nearest.id, peerName: nearest.name, kind, phase: "outgoing" };
-    deps.sendCall({ to: nearest.id, kind, action: "request" });
+    let chosenKind = kind;
+    if (kind === "video") {
+      try {
+        const stored = localStorage.getItem("pixeloffice.camera.enabled");
+        if (stored === "false") {
+          chosenKind = "audio";
+        }
+      } catch {}
+    }
+    call = { peerId: nearest.id, peerName: nearest.name, kind: chosenKind, phase: "outgoing" };
+    deps.sendCall({ to: nearest.id, kind: chosenKind, action: "request" });
     render();
   }
   btnSpeak.addEventListener("click", (e) => {
@@ -214,12 +295,79 @@ export function mountProximityCall(
     e.preventDefault();
     if (!call || call.phase !== "incoming") return;
     const { peerId, kind } = call;
-    call.phase = "active";
-    deps.sendCall({ to: peerId, kind, action: "accept" });
-    // Both sides begin negotiation on accept; CallManager's polite/impolite
-    // split decides who actually offers (glare-free).
-    void manager.startCall(peerId, kind);
-    render();
+    
+    if (kind === "video") {
+      let preferredVideoEnabled = true;
+      try {
+        const stored = localStorage.getItem("pixeloffice.camera.enabled");
+        if (stored !== null) {
+          preferredVideoEnabled = stored === "true";
+        }
+      } catch {}
+
+      if (!preferredVideoEnabled) {
+        call.phase = "active";
+        call.kind = "audio";
+        deps.sendCall({ to: peerId, kind: "audio", action: "accept" });
+        void manager.startCall(peerId, "audio");
+        render();
+        return;
+      }
+
+      call.phase = "preview";
+      previewCountdownVal = 2;
+      previewCountdown.textContent = `Starting in ${previewCountdownVal}s...`;
+      render();
+      
+      navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: true,
+      }).then((stream) => {
+        if (call && call.phase === "preview" && call.peerId === peerId) {
+          previewStream = stream;
+          previewVideo.srcObject = stream;
+          void previewVideo.play().catch(() => {});
+        } else {
+          for (const track of stream.getTracks()) track.stop();
+        }
+      }).catch((err) => {
+        console.error("Failed to acquire preview stream", err);
+      });
+      
+      previewTimer = setInterval(() => {
+        if (!call || call.phase !== "preview") {
+          clearPreview();
+          return;
+        }
+        previewCountdownVal -= 1;
+        if (previewCountdownVal <= 0) {
+          startPreConnection("video");
+        } else {
+          previewCountdown.textContent = `Starting in ${previewCountdownVal}s...`;
+        }
+      }, 1000);
+    } else {
+      call.phase = "active";
+      deps.sendCall({ to: peerId, kind, action: "accept" });
+      // Both sides begin negotiation on accept; CallManager's polite/impolite
+      // split decides who actually offers (glare-free).
+      void manager.startCall(peerId, kind);
+      render();
+    }
+  });
+
+  btnStartVideo.addEventListener("click", (e) => {
+    e.preventDefault();
+    startPreConnection("video");
+  });
+
+  btnStopVideo.addEventListener("click", (e) => {
+    e.preventDefault();
+    startPreConnection("audio");
   });
   btnReject.addEventListener("click", (e) => {
     e.preventDefault();
@@ -235,6 +383,9 @@ export function mountProximityCall(
     if (!call || call.phase !== "active") return;
     const next = !manager.isMicEnabled(call.peerId);
     manager.setMicEnabled(call.peerId, next);
+    try {
+      localStorage.setItem("pixeloffice.mic.enabled", String(next));
+    } catch {}
   });
   btnHangup.addEventListener("click", (e) => {
     e.preventDefault();
@@ -338,7 +489,7 @@ export function mountProximityCall(
     // the mic immediately and end the call (out of talking distance).
     if (call && !inRange.has(call.peerId)) {
       manager.setMicEnabled(call.peerId, false);
-      if (call.phase !== "incoming") {
+      if (call.phase !== "incoming" && call.phase !== "preview") {
         deps.sendCall({ to: call.peerId, kind: call.kind, action: "hangup" });
       } else {
         deps.sendCall({ to: call.peerId, kind: call.kind, action: "reject" });
@@ -368,12 +519,18 @@ export function mountProximityCall(
   function render(): void {
     const showPrompt = !call && !!nearest;
     const showIncoming = call?.phase === "incoming";
+    const showPreview = call?.phase === "preview";
     const showPanel = call?.phase === "outgoing" || call?.phase === "active";
+
+    if (!showPreview) {
+      clearPreview();
+    }
 
     prompt.hidden = !showPrompt;
     incoming.hidden = !showIncoming;
+    preview.hidden = !showPreview;
     panel.hidden = !showPanel;
-    root.hidden = !(showPrompt || showIncoming || showPanel);
+    root.hidden = !(showPrompt || showIncoming || showPreview || showPanel);
 
     if (showPrompt && nearest) {
       promptName.textContent = `Near ${nearest.name}`;
@@ -413,6 +570,7 @@ export function mountProximityCall(
     handlePeerGone,
     destroy() {
       unsubscribe();
+      clearPreview();
       manager.endAll();
       remoteVideo.srcObject = null;
       localVideo.srcObject = null;

@@ -366,12 +366,12 @@ const FURNITURE_SPECS: Record<FurnitureKind, FurnSpec> = {
       px(ctx, 2, H - 6, W - 4, 2, "#7c512e"); // apron shadow
       // Monitor.
       const mx = Math.floor(W / 2) - 10;
-      outlineRect(ctx, mx, 1, 20, 14, "#2a2e36"); // bezel
-      const screen = glow ? "#7fe2f5" : "#5fd0e8";
-      px(ctx, mx + 2, 3, 16, 9, screen); // screen glow
-      px(ctx, mx + 3, 4, 7, 3, glow ? "#cdf6ff" : "#9fe6f5"); // reflection
-      px(ctx, mx + 2, 11, 16, 1, "#3aa7bd"); // scanline foot
-      outlineRect(ctx, mx + 8, 15, 4, 3, "#3a3f48"); // stand
+      outlineRect(ctx, mx, 1, 20, 14, "#1c1e24"); // dark bezel
+      const screen = glow ? "#172030" : "#0f141f"; // dark screen
+      px(ctx, mx + 2, 3, 16, 9, screen); // screen
+      px(ctx, mx + 3, 4, 7, 3, glow ? "#2a3750" : "#1e273a"); // reflection
+      px(ctx, mx + 2, 11, 16, 1, "#172030"); // subtle glow foot
+      outlineRect(ctx, mx + 8, 15, 4, 3, "#2a2e36"); // stand
       // Keyboard, mouse, papers on the desk top.
       px(ctx, mx - 6, H - 6, 18, 4, "#3a3f48"); // keyboard
       for (let kx = mx - 5; kx < mx + 11; kx += 3) px(ctx, kx, H - 5, 2, 1, "#586070"); // keys
@@ -522,8 +522,8 @@ const FURNITURE_SPECS: Record<FurnitureKind, FurnSpec> = {
       px(ctx, 6, 12, W - 12, 4, "#a86f40");
       px(ctx, 8, 13, W - 16, 1, "#c08a55"); // band highlight
       // Small monitor on the counter.
-      outlineRect(ctx, W - 26, 1, 16, 7, "#2a2e36");
-      px(ctx, W - 24, 2, 12, 4, glow ? "#7fe2f5" : "#5fd0e8");
+      outlineRect(ctx, W - 26, 1, 16, 7, "#1c1e24");
+      px(ctx, W - 24, 2, 12, 4, glow ? "#172030" : "#0f141f");
       // Service bell on the counter.
       ctx.fillStyle = "#d9b441";
       ctx.beginPath();
@@ -642,17 +642,17 @@ const FURNITURE_SPECS: Record<FurnitureKind, FurnSpec> = {
 
       // Laptop (open) on the left
       outlineRect(ctx, 5, 5, 15, 10, "#4a4f59", "#1c1e23"); // base & screen lip
-      px(ctx, 6, 6, 13, 7, "#7fe2f5"); // blue screen
+      px(ctx, 6, 6, 13, 7, "#0f141f"); // dark screen
       px(ctx, 8, 8, 4, 3, "#e5a154"); // chart bar 1
       px(ctx, 13, 7, 4, 4, "#3ecf6e"); // chart bar 2
 
       // Secondary monitor showing charts on the right
-      outlineRect(ctx, W - 24, 1, 18, 14, "#2a2e36");
-      px(ctx, W - 22, 2, 14, 10, "#eef2f6"); // white canvas screen
+      outlineRect(ctx, W - 24, 1, 18, 14, "#1c1e24");
+      px(ctx, W - 22, 2, 14, 10, "#0f141f"); // dark screen
       px(ctx, W - 20, 4, 4, 6, "#4a90e2"); // blue bar
       px(ctx, W - 15, 6, 4, 4, "#f5a623"); // yellow bar
       px(ctx, W - 10, 8, 2, 2, "#7ed321"); // green bar
-      outlineRect(ctx, W - 17, 15, 4, 3, "#3a3f48"); // stand
+      outlineRect(ctx, W - 17, 15, 4, 3, "#2a2e36"); // stand
 
       // Colorful sticky notes
       px(ctx, 25, H - 6, 3, 3, "#ffe066"); // yellow note
@@ -710,10 +710,10 @@ const FURNITURE_SPECS: Record<FurnitureKind, FurnSpec> = {
 
       // Standard office monitor showing candidate portal
       const mx = Math.floor(W / 2) - 8;
-      outlineRect(ctx, mx, 2, 16, 13, "#2e333d");
-      px(ctx, mx + 2, 3, 12, 8, "#ffffff"); // white portal page
-      px(ctx, mx + 3, 4, 10, 2, "#357ab8"); // blue header
-      px(ctx, mx + 4, 7, 2, 2, "#b1b8c2"); // portrait placeholder
+      outlineRect(ctx, mx, 2, 16, 13, "#1c1e24");
+      px(ctx, mx + 2, 3, 12, 8, "#0f141f"); // dark portal page
+      px(ctx, mx + 3, 4, 10, 2, "#1d3a54"); // dark blue header
+      px(ctx, mx + 4, 7, 2, 2, "#4a5468"); // placeholder avatar
 
       // Manila Folder Organizer
       outlineRect(ctx, 4, H - 8, 7, 7, "#35485e");

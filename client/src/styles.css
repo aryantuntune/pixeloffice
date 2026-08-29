@@ -4455,6 +4455,7 @@ body.reduced-motion *::after {
 .prox-prompt[hidden],
 .prox-incoming[hidden],
 .prox-panel[hidden],
+.prox-preview[hidden],
 .prox-tiles[hidden] {
   display: none;
 }
@@ -4560,8 +4561,50 @@ body.reduced-motion *::after {
 .prox-calling { font-size: 13px; color: var(--c-text-muted); flex: 1; }
 .prox-controls .prox-btn-hangup { margin-left: auto; }
 
+.prox-preview {
+  background: var(--panel);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--sp-3);
+  animation: prox-rise var(--t-base) var(--ease-out);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 240px;
+  align-items: center;
+}
+.prox-preview-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  margin-bottom: var(--sp-1);
+}
+.prox-preview-video {
+  width: 200px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-xs);
+  background: #000;
+  display: block;
+}
+.prox-preview-countdown {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--c-warn);
+}
+.prox-preview-btns {
+  display: flex;
+  gap: var(--sp-2);
+  width: 100%;
+}
+.prox-preview-btns .prox-btn {
+  flex: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .prox-prompt, .prox-incoming, .prox-panel { animation: none; }
+  .prox-prompt, .prox-incoming, .prox-panel, .prox-preview { animation: none; }
 }
 
 /* ---------------------------------------------------------------------------

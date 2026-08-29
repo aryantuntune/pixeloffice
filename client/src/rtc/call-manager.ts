@@ -140,11 +140,17 @@ export class CallManager {
     if (call?.livekitRoom) {
       void call.livekitRoom.localParticipant.setMicrophoneEnabled(enabled);
       this.deps.events.onMicState(peerId, enabled);
+      try {
+        localStorage.setItem("pixeloffice.mic.enabled", String(enabled));
+      } catch {}
       return enabled;
     }
     if (!call?.local) return false;
     for (const track of call.local.getAudioTracks()) track.enabled = enabled;
     this.deps.events.onMicState(peerId, enabled);
+    try {
+      localStorage.setItem("pixeloffice.mic.enabled", String(enabled));
+    } catch {}
     return enabled;
   }
 
@@ -259,8 +265,21 @@ export class CallManager {
     await room.connect(url || lkUrl, token);
 
     // Enable mic and camera
-    await room.localParticipant.setMicrophoneEnabled(true);
-    if (kind === "video") {
+    let micPref = true;
+    let camPref = true;
+    try {
+      const storedMic = localStorage.getItem("pixeloffice.mic.enabled");
+      if (storedMic !== null) {
+        micPref = storedMic === "true";
+      }
+      const storedCam = localStorage.getItem("pixeloffice.camera.enabled");
+      if (storedCam !== null) {
+        camPref = storedCam === "true";
+      }
+    } catch {}
+
+    await room.localParticipant.setMicrophoneEnabled(micPref);
+    if (kind === "video" && camPref) {
       await room.localParticipant.setCameraEnabled(true);
       const localVideoTrack = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track?.mediaStreamTrack;
       if (localVideoTrack) {
@@ -270,7 +289,7 @@ export class CallManager {
     }
 
     this.deps.events.onCallActive(peerId, kind);
-    this.deps.events.onMicState(peerId, true);
+    this.deps.events.onMicState(peerId, micPref);
   }
 
 
@@ -289,13 +308,30 @@ export class CallManager {
       );
     }
 
+    let micPref = false;
+    let camPref = true;
+    try {
+      const storedMic = localStorage.getItem("pixeloffice.mic.enabled");
+      if (storedMic !== null) {
+        micPref = storedMic === "true";
+      }
+      const storedCam = localStorage.getItem("pixeloffice.camera.enabled");
+      if (storedCam !== null) {
+        camPref = storedCam === "true";
+      }
+    } catch {}
+
     const local = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: kind === "video",
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: kind === "video" && camPref,
     });
-    // Mic starts MUTED by default (human agency: never transmit until the user
-    // unmutes). The UI's "Speak"/unmute control flips this on.
-    for (const t of local.getAudioTracks()) t.enabled = false;
+    // Set mic/camera track status accordingly
+    for (const t of local.getAudioTracks()) t.enabled = micPref;
+    for (const t of local.getVideoTracks()) t.enabled = camPref;
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     const remote = new MediaStream();
