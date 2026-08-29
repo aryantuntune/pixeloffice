@@ -301,9 +301,24 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   meetLinkAnchor.target = "_blank";
   meetLinkAnchor.rel = "noopener noreferrer";
   meetLinkAnchor.textContent = "🎥 Open Meet";
-  meetLinkAnchor.hidden = true;
+  const dismissMeetingBtn = document.createElement("button");
+  dismissMeetingBtn.type = "button";
+  dismissMeetingBtn.className = "hud-meeting-dismiss-btn";
+  dismissMeetingBtn.title = "Dismiss meeting banner";
+  dismissMeetingBtn.setAttribute("aria-label", "Dismiss meeting banner");
+  dismissMeetingBtn.textContent = "✕";
+  dismissMeetingBtn.hidden = true;
 
-  topBar.append(logo, areaName, floorWidget, selfPlace, statusWrap, meetingBtn, meetLinkAnchor);
+  let dismissedMeetingId: string | null = null;
+  dismissMeetingBtn.addEventListener("click", () => {
+    const m = store.get().myMeeting;
+    if (m) dismissedMeetingId = m.id;
+    meetingBtn.hidden = true;
+    meetLinkAnchor.hidden = true;
+    dismissMeetingBtn.hidden = true;
+  });
+
+  topBar.append(logo, areaName, floorWidget, selfPlace, statusWrap, meetingBtn, meetLinkAnchor, dismissMeetingBtn);
 
   // --- Right sidebar -------------------------------------------------------
   const sidebar = document.createElement("div");
@@ -465,10 +480,19 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   function renderMeeting(state: UiState): void {
     const m = state.myMeeting;
     if (!m) {
+      dismissedMeetingId = null;
       meetingBtn.hidden = true;
       meetingBtn.onclick = null;
       meetLinkAnchor.hidden = true;
       meetLinkAnchor.removeAttribute("href");
+      dismissMeetingBtn.hidden = true;
+      return;
+    }
+
+    if (dismissedMeetingId === m.id) {
+      meetingBtn.hidden = true;
+      meetLinkAnchor.hidden = true;
+      dismissMeetingBtn.hidden = true;
       return;
     }
 
@@ -485,6 +509,7 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
       meetLinkAnchor.hidden = true;
     }
     meetingBtn.hidden = false;
+    dismissMeetingBtn.hidden = false;
     if (state.joinedMeeting) {
       meetingBtn.classList.remove("pulse");
       meetingBtn.classList.add("joined");
