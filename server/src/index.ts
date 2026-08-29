@@ -15,6 +15,12 @@
 
 // Must be first: load .env before the container reads process.env.
 import "./load-env";
+// Express 4 does not forward a rejected async handler to error middleware —
+// it becomes an unhandled promise rejection and kills the whole process (this
+// is how a single Redis error in one route took the entire office down). This
+// patches Router methods so every async handler's rejection reaches the
+// terminal error handler below instead. Must load before any router is built.
+import "express-async-errors";
 import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import express from "express";
