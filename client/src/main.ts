@@ -38,6 +38,7 @@ import {
   type WelcomePayload,
   type GameUpdatePayload,
   type FloorChangedPayload,
+  type BuildingUpdatedPayload,
   type LocationPayload,
   type FloorSyncCodePayload,
   type RtcCallS2C,
@@ -824,6 +825,36 @@ function registerBridge(conn: Connection): void {
         // the wrong floor after an elevator crossing.
         minimap?.setFloor(floor);
         pendingMinimapFloor = floor;
+      }
+    })();
+  });
+
+  // Live Building/Map Update: sent when Map Studio saves and activates a map.
+  conn.on<BuildingUpdatedPayload>(S2C.BUILDING_UPDATED, (payload) => {
+    if (!game || !store) return;
+    const localGame = game;
+    const localStore = store;
+    activeBuilding = null;
+    buildingFetch = null;
+
+    if (payload.building) {
+      localStore.setBuilding(payload.building);
+    }
+
+    void (async () => {
+      const b = await loadActiveBuilding();
+      if (!b || game !== localGame) return;
+      const currentFloorId = localStore.selfFloorId();
+      const currentFloor = b.floors.find((f) => f.id === currentFloorId) ?? b.floors[0];
+      if (currentFloor) {
+        const self = localStore.self();
+        if (self) {
+          const others = localStore.otherPlayers();
+          localGame.setActiveFloor(currentFloor, self, others);
+        }
+        minimap?.setFloor(currentFloor);
+        pendingMinimapFloor = currentFloor;
+        toasts.show("🗺️ Office floor map updated live", "info");
       }
     })();
   });

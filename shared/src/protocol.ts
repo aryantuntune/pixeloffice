@@ -193,7 +193,14 @@ export const S2C = {
   WHITEBOARD_UPDATE: "wb-update",
   /** A whiteboard was cleared by a viewer. */
   WHITEBOARD_CLEAR: "wb-clear",
+  /** Active building/map was updated live by Map Studio or admin. */
+  BUILDING_UPDATED: "building-updated",
 } as const;
+
+export interface BuildingUpdatedPayload {
+  activeBuildingId: string;
+  building?: BuildingSummary;
+}
 
 export interface WhiteboardStateChunkS2C {
   board: string;
