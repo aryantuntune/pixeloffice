@@ -287,11 +287,29 @@ export interface PoolShotInput {
   cueY?: number;
 }
 
+/** Ping-pong court geometry in canvas px (client renders 1:1, server simulates in these units). */
+export const PONG_COURT_W = 600;
+export const PONG_COURT_H = 400;
+export const PONG_BALL_R = 6;
+export const PONG_PADDLE_W = 10;
+export const PONG_PADDLE_H = 80;
+/** x of paddle 1's INNER (right) face — the plane the ball must cross to be hit. */
+export const PONG_PADDLE_1_FACE = 30;
+/** x of paddle 2's INNER (left) face. */
+export const PONG_PADDLE_2_FACE = 570;
+/** First to this many points wins (unchanged behavior). */
+export const PONG_WIN_SCORE = 5;
+
 export interface PongState {
   ballX: number;
   ballY: number;
   paddle1Y: number;
   paddle2Y: number;
+  /** Ball velocity in px/SECOND. Lets the client extrapolate between updates. Optional/additive. */
+  ballVelX?: number;
+  ballVelY?: number;
+  /** ms until the next serve; the ball is frozen at center while > 0. Optional/additive. */
+  serveIn?: number;
 }
 
 export interface TicTacToeState {

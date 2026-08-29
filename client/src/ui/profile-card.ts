@@ -18,6 +18,7 @@ import {
   type AvatarId,
   type PlayerSnapshot,
   type PresenceSource,
+  type RtcCallKind,
 } from "@pixeloffice/shared";
 
 const MAP = buildOfficeMap();
@@ -50,6 +51,12 @@ const SOURCE_LABEL: Record<PresenceSource, string> = {
 export interface ProfileCardCallbacks {
   /** Send the WAVE emote from the local user (always YOUR avatar). */
   onWave(): void;
+  /** Start a call with this player, or pull them into the call you are in. */
+  onCall?(sessionId: string, kind: RtcCallKind): void;
+  /** True when the local user is already in a call (labels flip to "Add to call"). */
+  isInCall?(): boolean;
+  /** The local user's own sessionId (self gets no call buttons). */
+  selfId?(): string;
 }
 
 export interface ProfileCardHandle {
@@ -139,6 +146,36 @@ export function mountProfileCard(parent: HTMLElement, cb: ProfileCardCallbacks):
     areaLabel.textContent = areaAt(MAP, player.x, player.y)?.name ?? "Hallway";
     areaRow.append(areaIcon, areaLabel);
 
+    // Call buttons (audio / video) — omitted for NPCs and self.
+    const isSelf = cb.selfId?.() === player.sessionId;
+    let callBtnsRow: HTMLElement | null = null;
+    if (cb.onCall && !player.isNpc && !isSelf) {
+      callBtnsRow = document.createElement("div");
+      callBtnsRow.className = "profile-call-btns";
+
+      const inCall = cb.isInCall?.() ?? false;
+
+      const callAudioBtn = document.createElement("button");
+      callAudioBtn.type = "button";
+      callAudioBtn.className = "profile-wave-btn profile-call-btn";
+      callAudioBtn.textContent = inCall ? "🎤 Add to call" : "🎤 Call";
+      callAudioBtn.addEventListener("click", () => {
+        cb.onCall?.(player.sessionId, "audio");
+        close();
+      });
+
+      const callVideoBtn = document.createElement("button");
+      callVideoBtn.type = "button";
+      callVideoBtn.className = "profile-wave-btn profile-call-btn";
+      callVideoBtn.textContent = inCall ? "📹 Add to call" : "📹 Video";
+      callVideoBtn.addEventListener("click", () => {
+        cb.onCall?.(player.sessionId, "video");
+        close();
+      });
+
+      callBtnsRow.append(callAudioBtn, callVideoBtn);
+    }
+
     // Wave button — always your own emote (enabled for NPCs too; it pops over
     // YOUR avatar, not theirs). Closes the card after sending.
     const waveBtn = document.createElement("button");
@@ -150,7 +187,7 @@ export function mountProfileCard(parent: HTMLElement, cb: ProfileCardCallbacks):
       close();
     });
 
-    card.append(head, deptRow, presRow, areaRow, waveBtn);
+    card.append(head, deptRow, presRow, areaRow, ...(callBtnsRow ? [callBtnsRow] : []), waveBtn);
   }
 
   // Dismiss on outside click. Capture phase so it runs before the next open's

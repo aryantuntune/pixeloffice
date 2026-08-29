@@ -40,7 +40,10 @@ import {
   type FloorChangedPayload,
   type LocationPayload,
   type FloorSyncCodePayload,
-  type RtcCallS2C,
+  type CallRingS2C,
+  type CallStateS2C,
+  type CallEndedS2C,
+  type RoomCallS2C,
   type RtcSignalS2C,
   type WhiteboardStateS2C,
   type WhiteboardUpdateS2C,
@@ -75,7 +78,7 @@ import { mountMinimap, type MinimapHandle } from "./ui/minimap";
 import { mountSettings, readHideNpcs, type SettingsHandle } from "./ui/settings";
 import { mountOnboarding, type OnboardingHandle } from "./ui/onboarding";
 import { createMapStudio, type MapStudioHandle } from "./ui/map-studio";
-import { mountProximityCall, type ProximityCallHandle } from "./ui/proximity-call";
+import { mountCallPanel, type CallPanelHandle } from "./ui/call-panel";
 import { mountWhiteboard, type WhiteboardHandle } from "./ui/whiteboard";
 import { appRedirectForPublicHash, routeForPath } from "./public-routes";
 import { renderPublicPage } from "./public-pages";
@@ -154,11 +157,11 @@ let onboarding: OnboardingHandle | null = null;
 // reconnects (like admin/settings). It is self-contained: it fetches/saves
 // buildings through /api/maps and never touches the live game or avatars.
 let mapStudio: MapStudioHandle | null = null;
-// Proximity voice/video. Rebuilt per session (binds to the live store +
-// connection). Subscribes to the store to surface call buttons within 2 tiles
-// and auto-mutes/ends a call on leaving proximity. Media is P2P WebRTC; the
-// server only relays signaling.
-let proximityCall: ProximityCallHandle | null = null;
+// Call sessions (voice/video conferences and 1:1 calls). Rebuilt per session
+// (binds to the live connection). C2S goes over the live connection; the S2C
+// relay messages are routed in here from the bridge below. Media flows over
+// LiveKit when configured, else P2P mesh WebRTC.
+let callPanel: CallPanelHandle | null = null;
 // Per-department collaborative whiteboards. Rebuilt per session (binds to the
 // live store + connection). Strokes sync through the server; never floor-scoped.
 let whiteboard: WhiteboardHandle | null = null;
@@ -442,6 +445,8 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
     onJoinGame: (gameId, mode) => conn.send(C2S.JOIN_GAME, { gameId, mode }),
     onLocate: (sessionId) => locate(sessionId),
     onOpenProfile: (sessionId) => openProfile(sessionId),
+    onStartRoomCall: (roomName, kind) => conn.send(C2S.CALL_START_ROOM, { roomName, kind }),
+    onJoinRoomCall: (callId) => conn.send(C2S.CALL_JOIN, { callId }),
     onEditSelfProfile: () => openSelfProfileEditor(),
     isNpcHidden: () => readHideNpcs(),
     // Camera-only "Find the elevator": pan to the nearest portal on the current
@@ -513,12 +518,13 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
   // detect who is within 2 tiles, surfaces the Speak/Video buttons, and drives
   // the WebRTC calls. C2S goes over the live connection; the S2C relay messages
   // are routed in here from the bridge below.
-  proximityCall = mountProximityCall(hudRoot, {
-    store: localStore,
+  callPanel = mountCallPanel(hudRoot, {
     getSelfId: () => selfId,
-    sendCall: (payload) => conn.send(C2S.RTC_CALL, payload),
-    sendSignal: (payload) => conn.send(C2S.RTC_SIGNAL, payload),
-    toast: (message) => toasts.show(message, "info"),
+    sendInvite: (p) => conn.send(C2S.CALL_INVITE, p),
+    sendAnswer: (p) => conn.send(C2S.CALL_ANSWER, p),
+    sendLeave: (p) => conn.send(C2S.CALL_LEAVE, p),
+    sendSignal: (p) => conn.send(C2S.RTC_SIGNAL, p),
+    toast: (m) => toasts.show(m, "info"),
   });
 
   // Per-department Excalidraw whiteboard (per session). Opened by walking to a
@@ -534,6 +540,9 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
   // Profile card (per session — its Wave button emotes from the live connection).
   profileCard = mountProfileCard(hudRoot, {
     onWave: () => conn.send(C2S.EMOTE, { emote: "WAVE" }),
+    onCall: (sid, kind) => conn.send(C2S.CALL_INVITE, { to: sid, kind }),
+    isInCall: () => callPanel?.isInCall() ?? false,
+    selfId: () => selfId,
   });
 
   // Minimap (per session — binds to this store). Dots redraw on every store
@@ -637,9 +646,6 @@ function registerBridge(conn: Connection): void {
 
   conn.on<PlayerLeftPayload>(S2C.PLAYER_LEFT, ({ sessionId }) => {
     if (!game || !store) return;
-    // Tear down any proximity call with the departing peer BEFORE the store drops
-    // them (so the controller can still resolve their name for the toast).
-    proximityCall?.handlePeerGone(sessionId);
     store.removePlayer(sessionId);
     game.removePlayer(sessionId);
   });
@@ -750,13 +756,21 @@ function registerBridge(conn: Connection): void {
     settings?.setPairCode(code);
   });
 
-  // Proximity call relay (P2P WebRTC). The server validated these came from a
-  // same-floor peer; the controller owns the call state machine + media.
-  conn.on<RtcCallS2C>(S2C.RTC_CALL, (payload) => {
-    proximityCall?.handleCall(payload);
+  // Call session & WebRTC signaling bridge
+  conn.on<CallRingS2C>(S2C.CALL_RING, (payload) => {
+    callPanel?.handleRing(payload);
+  });
+  conn.on<CallStateS2C>(S2C.CALL_STATE, (payload) => {
+    callPanel?.handleState(payload);
+  });
+  conn.on<CallEndedS2C>(S2C.CALL_ENDED, (payload) => {
+    callPanel?.handleEnded(payload);
   });
   conn.on<RtcSignalS2C>(S2C.RTC_SIGNAL, (payload) => {
-    proximityCall?.handleSignal(payload);
+    callPanel?.handleSignal(payload);
+  });
+  conn.on<RoomCallS2C>(S2C.ROOM_CALL, (payload) => {
+    store?.setRoomCall(payload);
   });
 
   // Whiteboard sync (department-scoped). The controller owns the canvas state.
@@ -843,8 +857,8 @@ function teardownSession(): void {
   emoteBar = null;
   profileCard?.destroy();
   profileCard = null;
-  proximityCall?.destroy();
-  proximityCall = null;
+  callPanel?.destroy();
+  callPanel = null;
   whiteboard?.destroy();
   whiteboard = null;
   minimap?.destroy();

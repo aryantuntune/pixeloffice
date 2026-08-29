@@ -17,6 +17,7 @@ import {
   type SetStatusPayload,
   type SocialEvent,
   type SocialEventType,
+  type RtcCallKind,
 } from "@pixeloffice/shared";
 import type { Store, UiState } from "./state";
 import { mountGameOverlay, type GameOverlayHandle } from "./games";
@@ -141,6 +142,8 @@ export interface HudCallbacks {
    * calls this. No-op / button hidden if the integrator does not wire it.
    */
   onLocateElevator?(): void;
+  onStartRoomCall?(roomName: string, kind: RtcCallKind): void;
+  onJoinRoomCall?(callId: string): void;
 }
 
 export interface HudHandle {
@@ -315,6 +318,16 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   rosterBody.className = "hud-panel-body";
   rosterPanel.append(rosterTitle, rosterBody);
 
+  const roomCallPanel = document.createElement("div");
+  roomCallPanel.className = "hud-panel hud-room-call";
+  const roomCallTitle = document.createElement("h2");
+  roomCallTitle.className = "hud-panel-title";
+  roomCallTitle.textContent = "In this room";
+  const roomCallBody = document.createElement("div");
+  roomCallBody.className = "hud-panel-body";
+  roomCallPanel.append(roomCallTitle, roomCallBody);
+  roomCallPanel.hidden = true;
+
   const meetingsPanel = document.createElement("div");
   meetingsPanel.className = "hud-panel hud-meetings";
   const meetingsTitle = document.createElement("h2");
@@ -333,7 +346,7 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
   eventsBody.className = "hud-panel-body";
   eventsPanel.append(eventsTitle, eventsBody);
 
-  sidebar.append(rosterPanel, meetingsPanel, eventsPanel);
+  sidebar.append(rosterPanel, roomCallPanel, meetingsPanel, eventsPanel);
 
   // --- Narrow-viewport sidebar drawer toggle -------------------------------
   // On phone/narrow widths the fixed 264px sidebar would cover the canvas, the
@@ -770,6 +783,71 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
     return card;
   }
 
+  function renderRoomCall(state: UiState): void {
+    const rc = state.roomCall;
+    if (!rc || !rc.roomName || rc.occupants.length < 2) {
+      roomCallPanel.hidden = true;
+      roomCallBody.innerHTML = "";
+      return;
+    }
+
+    roomCallPanel.hidden = false;
+    roomCallBody.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "room-call-head";
+    head.textContent = `${rc.roomName} · ${rc.occupants.length} here`;
+
+    const people = document.createElement("div");
+    people.className = "room-call-people";
+    people.textContent = rc.occupants.map((o) => o.name).join(", ");
+
+    roomCallBody.append(head, people);
+
+    if (rc.callId === null) {
+      const btns = document.createElement("div");
+      btns.className = "room-call-btns";
+
+      const startAudioBtn = document.createElement("button");
+      startAudioBtn.type = "button";
+      startAudioBtn.className = "event-btn room-call-btn";
+      startAudioBtn.textContent = "🎤 Start room call";
+      startAudioBtn.addEventListener("click", () => {
+        if (rc.roomName) cb.onStartRoomCall?.(rc.roomName, "audio");
+      });
+
+      const startVideoBtn = document.createElement("button");
+      startVideoBtn.type = "button";
+      startVideoBtn.className = "event-btn room-call-btn";
+      startVideoBtn.textContent = "📹 Start video call";
+      startVideoBtn.addEventListener("click", () => {
+        if (rc.roomName) cb.onStartRoomCall?.(rc.roomName, "video");
+      });
+
+      btns.append(startAudioBtn, startVideoBtn);
+      roomCallBody.appendChild(btns);
+    } else if (!rc.joined) {
+      const btns = document.createElement("div");
+      btns.className = "room-call-btns";
+
+      const joinBtn = document.createElement("button");
+      joinBtn.type = "button";
+      joinBtn.className = "event-btn room-call-btn room-call-btn-join";
+      joinBtn.textContent = "📞 Join room call";
+      joinBtn.addEventListener("click", () => {
+        if (rc.callId) cb.onJoinRoomCall?.(rc.callId);
+      });
+
+      btns.appendChild(joinBtn);
+      roomCallBody.appendChild(btns);
+    } else {
+      const statusLine = document.createElement("div");
+      statusLine.className = "room-call-status";
+      statusLine.textContent = "You're in the room call";
+      roomCallBody.appendChild(statusLine);
+    }
+  }
+
   let gameOverlay: GameOverlayHandle | null = null;
 
   function renderGameOverlay(state: UiState): void {
@@ -803,6 +881,7 @@ export function createHud(parent: HTMLElement, store: Store, cb: HudCallbacks): 
     renderMeeting(state);
     renderMeetingDetails(state.myMeeting);
     renderRoster(state);
+    renderRoomCall(state);
     renderEvents(state);
 
     renderInteractPrompt(state);

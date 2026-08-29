@@ -58,11 +58,18 @@ import {
   type SetLocationSyncPayload,
   type LocationPayload,
   type FloorSyncCodePayload,
-  type RtcCallC2S,
-  type RtcCallS2C,
+  type CallInviteC2S,
+  type CallAnswerC2S,
+  type CallJoinC2S,
+  type CallStartRoomC2S,
+  type CallLeaveC2S,
+  type CallRingS2C,
+  type CallStateS2C,
+  type CallEndedS2C,
+  type RoomCallS2C,
+  type CallParticipantInfo,
   type RtcSignalC2S,
   type RtcSignalS2C,
-  type RtcCallAction,
   type WhiteboardOpenC2S,
   type WhiteboardCloseC2S,
   type WhiteboardUpdateC2S,
@@ -71,8 +78,7 @@ import {
   type WhiteboardUpdateS2C,
   type WhiteboardClearS2C,
   type WhiteboardElement,
-  chebyshev,
-  CALL_REQUEST_TILES,
+  areaAt,
   type SocialEvent,
   type ToastPayload,
   type WelcomePayload,
@@ -81,11 +87,16 @@ import {
   type GameType,
   type GamePlayer,
   type PongState,
+  PONG_COURT_W,
+  PONG_COURT_H,
+  PONG_WIN_SCORE,
   type TicTacToeState,
   type ConnectFourState,
   type PoolState,
   type PoolShotInput,
 } from "@pixeloffice/shared";
+import { freshPongSim, stepPong, type PongSim } from "../games/pong/pong-engine";
+import type { CallEffect } from "../calls/call.service";
 import {
   freshPoolState,
   applyShot,
@@ -129,13 +140,6 @@ const ACTION_WINDOW_MS = 1000;
 // flowing while still capping a flood. Call CONTROL reuses the action bucket.
 const RTC_SIGNAL_RATE = 80;
 const RTC_SIGNAL_WINDOW_MS = 1000;
-const RTC_CALL_ACTIONS = new Set<RtcCallAction>([
-  "request",
-  "accept",
-  "reject",
-  "cancel",
-  "hangup",
-]);
 // Whiteboard: throttled element-batch updates, plus open/close/clear. Updates
 // are debounced client-side (~one batch per change burst), so a modest rate is
 // plenty while still bounding abuse.
@@ -243,15 +247,18 @@ export class OfficeRoom extends Room {
   private readonly wbBuckets = new Map<string, TokenBucket>();
   /** board (department) -> sessionIds currently viewing it (broadcast targets). */
   private readonly wbSubs = new Map<string, Set<string>>();
+  /** sessionId -> `${floorId}\0${areaName}` of the MEETING_ROOM they stand in, or null. */
+  private readonly playerRoom = new Map<string, string | null>();
 
   /** Active multiplayer games in the lounge. */
   private readonly games = new Map<string, ActiveGame>();
-  private pongInterval?: any;
-  private pongVelX = 6;
-  private pongVelY = 5;
+  private pongInterval?: { clear: () => void };
+  private pongSim: PongSim | null = null;
+  private pongLastMs = 0;
+  private pongSinceBroadcastMs = 0;
+  private pongSeed = 0x2545f491;
   private paddle1Dir = 0;
   private paddle2Dir = 0;
-
   /** Per-pool-game AI turn timers (so a leave can cancel a pending AI shot). */
   private readonly poolAiTimers = new Map<string, any>();
   /** Monotonic seed source for deterministic-per-game AI PRNGs. */
@@ -289,7 +296,7 @@ export class OfficeRoom extends Room {
       score1: 0,
       score2: 0,
       winnerSessionId: null,
-      state: { ballX: 300, ballY: 200, paddle1Y: 160, paddle2Y: 160 },
+      state: { ballX: PONG_COURT_W / 2, ballY: PONG_COURT_H / 2, paddle1Y: 160, paddle2Y: 160 },
       status: "idle",
     });
 
@@ -643,6 +650,7 @@ export class OfficeRoom extends Room {
     // Join complete: subsequent presence changes for this session broadcast.
     this.joining.delete(client.sessionId);
 
+    this.refreshRoom(client.sessionId);
     log.info("player joined", {
       name: identity.name,
       department: identity.department,
@@ -666,6 +674,14 @@ export class OfficeRoom extends Room {
       }
     }
 
+    this.applyCallEffect(container.calls.disconnect(sessionId));
+    const vacatedKey = this.playerRoom.get(sessionId);
+    this.playerRoom.delete(sessionId);
+    if (vacatedKey) {
+      for (const occupant of this.roomOccupants(vacatedKey)) {
+        this.sendRoomCall(occupant.sessionId);
+      }
+    }
     this.players.delete(sessionId);
     this.sessionUser.delete(sessionId);
     // Drop the transient IP + sync flag (privacy: nothing about the IP outlives
@@ -738,7 +754,21 @@ export class OfficeRoom extends Room {
     this.onMessage(C2S.SET_LOCATION_SYNC, (client, payload: SetLocationSyncPayload) =>
       this.handleSetLocationSync(client, payload),
     );
-    this.onMessage(C2S.RTC_CALL, (client, payload: RtcCallC2S) => this.handleRtcCall(client, payload));
+    this.onMessage(C2S.CALL_INVITE, (client, payload: CallInviteC2S) =>
+      this.handleCallInvite(client, payload),
+    );
+    this.onMessage(C2S.CALL_ANSWER, (client, payload: CallAnswerC2S) =>
+      this.handleCallAnswer(client, payload),
+    );
+    this.onMessage(C2S.CALL_JOIN, (client, payload: CallJoinC2S) =>
+      this.handleCallJoin(client, payload),
+    );
+    this.onMessage(C2S.CALL_START_ROOM, (client, payload: CallStartRoomC2S) =>
+      this.handleCallStartRoom(client, payload),
+    );
+    this.onMessage(C2S.CALL_LEAVE, (client, payload: CallLeaveC2S) =>
+      this.handleCallLeave(client, payload),
+    );
     this.onMessage(C2S.RTC_SIGNAL, (client, payload: RtcSignalC2S) =>
       this.handleRtcSignal(client, payload),
     );
@@ -828,6 +858,7 @@ export class OfficeRoom extends Room {
 
     const moved: PlayerMovedPayload = { sessionId: client.sessionId, x, y, dir, moving };
     this.broadcastToFloorExcept(client, floorId, S2C.PLAYER_MOVED, moved);
+    this.refreshRoom(client.sessionId);
   }
 
   /**
@@ -866,6 +897,7 @@ export class OfficeRoom extends Room {
     const joined: PlayerJoinedPayload = { player: { ...snap } };
     this.broadcastToFloorExcept(client, toFloorId, S2C.PLAYER_JOINED, joined);
 
+    this.refreshRoom(client.sessionId);
     // Tell the mover about their new surroundings (full re-sync of the floor).
     const payload: FloorChangedPayload = {
       selfFloorId: toFloorId,
@@ -1269,6 +1301,7 @@ export class OfficeRoom extends Room {
     if (!snap) return;
     snap.x = x;
     snap.y = y;
+    this.refreshRoom(sessionId);
   }
 
   /** Snapshot copy of every connected player (admin REST read model). */
@@ -1416,67 +1449,249 @@ export class OfficeRoom extends Room {
   }
 
   // -------------------------------------------------------------------------
-  // Proximity voice/video signaling relay (P2P WebRTC).
+  // Voice/video call session routing (P2P WebRTC / LiveKit) & Room Calls.
   //
-  // The room is a DUMB RELAY: it validates the target is a same-floor human and
-  // forwards the opaque payload to that one peer. Media is peer-to-peer and
-  // never touches the server. PRIVACY (Constitution: presence, not surveillance)
-  // — we NEVER log who called whom, call kind, duration, or any call content.
+  // Media is peer-to-peer (or SFU-routed via LiveKit) and never touches the
+  // server. PRIVACY (Constitution: presence, not surveillance) — we NEVER log
+  // who called whom, call kind, duration, or any call content.
   // -------------------------------------------------------------------------
 
-  /**
-   * Resolve the target client IFF it is a HUMAN currently on the SAME floor as
-   * the sender (and not the sender themselves). Returns undefined otherwise so
-   * the caller silently drops the relay. Same-floor is the hard gate; an
-   * additional distance gate is applied only to call *requests* (see below).
-   */
-  private rtcPeer(client: Client, targetSessionId: unknown): Client | undefined {
-    if (typeof targetSessionId !== "string" || targetSessionId === client.sessionId) return undefined;
-    const me = this.players.get(client.sessionId);
-    const them = this.players.get(targetSessionId);
-    if (!me || me.isNpc || !them || them.isNpc) return undefined;
-    const myFloor = me.floorId ?? this.groundFloorId;
-    const theirFloor = them.floorId ?? this.groundFloorId;
-    if (myFloor !== theirFloor) return undefined;
-    return this.clientFor(targetSessionId);
+  private name(sessionId: string): string {
+    return this.players.get(sessionId)?.name ?? "Someone";
   }
 
-  /** Relay proximity call control (request/accept/reject/cancel/hangup). */
-  private handleRtcCall(client: Client, payload: RtcCallC2S): void {
+  private infos(sessionIds: Iterable<string>): CallParticipantInfo[] {
+    const list: CallParticipantInfo[] = [];
+    for (const id of sessionIds) {
+      list.push({ sessionId: id, name: this.name(id) });
+    }
+    return list;
+  }
+
+  private roomKeyOf(snap: PlayerSnapshot): string | null {
+    const floorId = snap.floorId ?? this.groundFloorId;
+    const map = this.floors.get(floorId);
+    const area = map && areaAt(map, snap.x, snap.y);
+    return area?.type === "MEETING_ROOM" ? `${map.id}\u0000${area.name}` : null;
+  }
+
+  private roomOccupants(key: string): PlayerSnapshot[] {
+    const result: PlayerSnapshot[] = [];
+    for (const [sessionId, roomKey] of this.playerRoom.entries()) {
+      if (roomKey === key) {
+        const player = this.players.get(sessionId);
+        if (player && !player.isNpc) {
+          result.push(player);
+        }
+      }
+    }
+    return result;
+  }
+
+  private sendRoomCall(sessionId: string): void {
+    const key = this.playerRoom.get(sessionId);
+    if (!key) {
+      const payload: RoomCallS2C = {
+        roomName: null,
+        floorId: null,
+        occupants: [],
+        callId: null,
+        joined: false,
+      };
+      this.clientFor(sessionId)?.send(S2C.ROOM_CALL, payload);
+      return;
+    }
+
+    const [floorId, roomName] = key.split("\u0000");
+    const occupants = this.roomOccupants(key);
+    const call = container.calls.roomCall(key);
+    const joined = call?.participants.has(sessionId) ?? false;
+
+    const payload: RoomCallS2C = {
+      roomName: roomName ?? null,
+      floorId: floorId ?? null,
+      occupants: this.infos(occupants.map((o) => o.sessionId)),
+      callId: call?.id ?? null,
+      kind: call?.kind,
+      joined,
+    };
+    this.clientFor(sessionId)?.send(S2C.ROOM_CALL, payload);
+  }
+
+  private refreshRoom(sessionId: string): void {
+    const snap = this.players.get(sessionId);
+    if (!snap || snap.isNpc) return;
+
+    const newKey = this.roomKeyOf(snap);
+    const oldKey = this.playerRoom.get(sessionId) ?? null;
+    if (newKey === oldKey) return;
+
+    this.playerRoom.set(sessionId, newKey);
+
+    // Refresh room card for the mover
+    this.sendRoomCall(sessionId);
+
+    // Refresh for everyone in the old room
+    if (oldKey) {
+      for (const occupant of this.roomOccupants(oldKey)) {
+        this.sendRoomCall(occupant.sessionId);
+      }
+    }
+    // Refresh for everyone in the new room
+    if (newKey) {
+      for (const occupant of this.roomOccupants(newKey)) {
+        if (occupant.sessionId !== sessionId) {
+          this.sendRoomCall(occupant.sessionId);
+        }
+      }
+    }
+  }
+
+  private applyCallEffect(e: CallEffect): void {
+    // 1. Ring recipients
+    for (const r of e.ring) {
+      const call = container.calls.get(r.callId);
+      if (!call) continue;
+      const payload: CallRingS2C = {
+        callId: r.callId,
+        from: r.from,
+        fromName: this.name(r.from),
+        kind: call.kind,
+        participants: this.infos(call.participants),
+      };
+      this.clientFor(r.to)?.send(S2C.CALL_RING, payload);
+    }
+
+    // 2. Updated call rosters
+    for (const callId of e.updated) {
+      const call = container.calls.get(callId);
+      if (!call) continue;
+      const roomName = call.roomKey ? call.roomKey.split("\u0000")[1] : undefined;
+      const payload: CallStateS2C = {
+        callId,
+        kind: call.kind,
+        participants: this.infos(call.participants),
+        pending: this.infos(call.invites.keys()),
+        roomName,
+      };
+      const recipients = new Set([...call.participants, ...call.invites.keys()]);
+      for (const sessionId of recipients) {
+        this.clientFor(sessionId)?.send(S2C.CALL_STATE, payload);
+      }
+    }
+
+    // 3. Ended calls
+    for (const end of e.ended) {
+      const payload: CallEndedS2C = {
+        callId: end.callId,
+        reason: end.reason,
+      };
+      this.clientFor(end.to)?.send(S2C.CALL_ENDED, payload);
+    }
+
+    // 4. Notices / Toasts
+    for (const n of e.notice) {
+      let message = "That call is not available.";
+      if (n.kind === "declined") {
+        message = `${this.name(n.about ?? "")} declined.`;
+      } else if (n.kind === "full") {
+        message = "That call is full.";
+      } else if (n.kind === "unavailable") {
+        message = "That call is not available.";
+      }
+      const toast: ToastPayload = { message, level: "info" };
+      this.clientFor(n.to)?.send(S2C.TOAST, toast);
+    }
+
+    // 5. Room updates
+    for (const roomKey of e.rooms) {
+      for (const occupant of this.roomOccupants(roomKey)) {
+        this.sendRoomCall(occupant.sessionId);
+      }
+    }
+  }
+
+  private handleCallInvite(client: Client, payload: CallInviteC2S): void {
     if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const to = payload?.to;
     const kind = payload?.kind;
-    const action = payload?.action;
-    if (kind !== "audio" && kind !== "video") return;
-    if (!RTC_CALL_ACTIONS.has(action)) return;
+    if (typeof to !== "string" || (kind !== "audio" && kind !== "video")) return;
+
+    const me = this.players.get(client.sessionId);
+    const them = this.players.get(to);
+    if (!me || me.isNpc || !them || them.isNpc) return;
+
+    this.applyCallEffect(container.calls.invite(client.sessionId, to, kind));
+  }
+
+  private handleCallAnswer(client: Client, payload: CallAnswerC2S): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const callId = payload?.callId;
+    const answer = payload?.answer;
+    if (typeof callId !== "string" || !answer) return;
+    if (answer !== "accept" && answer !== "reject" && answer !== "switch" && answer !== "merge") return;
 
     const me = this.players.get(client.sessionId);
     if (!me || me.isNpc) return;
-    const peer = this.rtcPeer(client, payload?.to);
-    if (!peer) return;
 
-    // Soft anti-spam gate: a call may only be INITIATED when the two avatars are
-    // genuinely near (a touch wider than the UI's button radius so a click is
-    // not lost to a one-tile drift). accept/reject/cancel/hangup are NOT
-    // distance-gated so an in-progress call survives normal walking.
-    if (action === "request") {
-      const them = this.players.get(peer.sessionId)!;
-      if (chebyshev(me.x, me.y, them.x, them.y) > CALL_REQUEST_TILES) return;
-    }
-
-    const out: RtcCallS2C = { from: client.sessionId, fromName: me.name, kind, action };
-    peer.send(S2C.RTC_CALL, out);
+    this.applyCallEffect(container.calls.answer(client.sessionId, callId, answer));
   }
 
-  /** Relay an opaque WebRTC signaling blob (SDP offer/answer or ICE) to a peer. */
+  private handleCallJoin(client: Client, payload: CallJoinC2S): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const callId = payload?.callId;
+    if (typeof callId !== "string") return;
+
+    const me = this.players.get(client.sessionId);
+    if (!me || me.isNpc) return;
+
+    const call = container.calls.get(callId);
+    if (!call || !call.roomKey) return;
+    const myRoom = this.playerRoom.get(client.sessionId);
+    if (myRoom !== call.roomKey) return;
+
+    this.applyCallEffect(container.calls.join(client.sessionId, callId));
+  }
+
+  private handleCallStartRoom(client: Client, payload: CallStartRoomC2S): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const roomName = payload?.roomName;
+    const kind = payload?.kind;
+    if (typeof roomName !== "string" || (kind !== "audio" && kind !== "video")) return;
+
+    const me = this.players.get(client.sessionId);
+    if (!me || me.isNpc) return;
+
+    const key = this.playerRoom.get(client.sessionId);
+    if (!key) return;
+    const [, keyRoom] = key.split("\u0000");
+    if (keyRoom !== roomName) return;
+
+    const occupants = this.roomOccupants(key).map((o) => o.sessionId);
+    this.applyCallEffect(container.calls.startRoomCall(client.sessionId, key, kind, occupants));
+  }
+
+  private handleCallLeave(client: Client, payload: CallLeaveC2S): void {
+    if (!this.allow(this.actionBuckets, client.sessionId)) return;
+    const callId = payload?.callId;
+    if (typeof callId !== "string") return;
+
+    const me = this.players.get(client.sessionId);
+    if (!me || me.isNpc) return;
+
+    this.applyCallEffect(container.calls.leave(client.sessionId, callId));
+  }
+
   private handleRtcSignal(client: Client, payload: RtcSignalC2S): void {
     if (!this.allow(this.rtcBuckets, client.sessionId)) return;
-    if (payload?.data === undefined) return;
-    const peer = this.rtcPeer(client, payload?.to);
+    if (payload?.data === undefined || typeof payload?.to !== "string") return;
+    if (!container.calls.sharesCall(client.sessionId, payload.to)) return;
+
+    const peer = this.clientFor(payload.to);
     if (!peer) return;
     const out: RtcSignalS2C = { from: client.sessionId, data: payload.data };
     peer.send(S2C.RTC_SIGNAL, out);
   }
-
   // -------------------------------------------------------------------------
   // Per-department collaborative whiteboards.
   //
@@ -1664,14 +1879,12 @@ export class OfficeRoom extends Room {
     if (game.type === "ping-pong") {
       game.score1 = 0;
       game.score2 = 0;
-      game.state = {
-        ballX: 300,
-        ballY: 200,
-        paddle1Y: 160,
-        paddle2Y: 160,
-      };
+      this.pongSim = freshPongSim(makePrng(this.pongSeed++), 1);
+      game.state = this.projectPong(this.pongSim);
+      this.pongLastMs = Date.now();
+      this.pongSinceBroadcastMs = 0;
       if (!this.pongInterval) {
-        this.pongInterval = this.clock.setInterval(() => this.tickPong(), 40);
+        this.pongInterval = this.clock.setInterval(() => this.tickPong(), 16);
       }
     } else if (game.type === "tic-tac-toe") {
       game.state = {
@@ -1746,103 +1959,77 @@ export class OfficeRoom extends Room {
       if (!anyPongRunning && this.pongInterval) {
         this.pongInterval.clear();
         this.pongInterval = undefined;
+        this.pongSim = null;
       }
 
       this.broadcast(S2C.GAME_UPDATE, { game });
     }
   }
 
+  private projectPong(sim: PongSim): PongState {
+    return {
+      ballX: Math.round(sim.ballX * 100) / 100,
+      ballY: Math.round(sim.ballY * 100) / 100,
+      paddle1Y: Math.round(sim.paddle1Y * 100) / 100,
+      paddle2Y: Math.round(sim.paddle2Y * 100) / 100,
+      ballVelX: Math.round(sim.velX * 100) / 100,
+      ballVelY: Math.round(sim.velY * 100) / 100,
+      serveIn: Math.round(sim.serveIn),
+    };
+  }
+
   private tickPong(): void {
     const game = this.games.get("lounge:ping-pong");
-    if (!game || game.status !== "playing" || !game.state) return;
-    const state = game.state as PongState;
+    if (!game || game.status !== "playing" || !this.pongSim) return;
 
-    // Move paddles
-    const paddleSpeed = 8;
-    const paddleHeight = 80;
-    const courtHeight = 400;
+    const now = Date.now();
+    const dt = Math.min(now - this.pongLastMs, 100);
+    this.pongLastMs = now;
 
-    if (this.paddle1Dir === -1) {
-      state.paddle1Y = Math.max(0, state.paddle1Y - paddleSpeed);
-    } else if (this.paddle1Dir === 1) {
-      state.paddle1Y = Math.min(courtHeight - paddleHeight, state.paddle1Y + paddleSpeed);
-    }
+    const { scored } = stepPong(
+      this.pongSim,
+      this.paddle1Dir as -1 | 0 | 1,
+      this.paddle2Dir as -1 | 0 | 1,
+      dt,
+      makePrng(this.pongSeed++),
+    );
 
-    if (this.paddle2Dir === -1) {
-      state.paddle2Y = Math.max(0, state.paddle2Y - paddleSpeed);
-    } else if (this.paddle2Dir === 1) {
-      state.paddle2Y = Math.min(courtHeight - paddleHeight, state.paddle2Y + paddleSpeed);
-    }
-
-    // Move ball
-    state.ballX += this.pongVelX;
-    state.ballY += this.pongVelY;
-
-    // Bounce off top and bottom walls
-    if (state.ballY <= 4) {
-      state.ballY = 4;
-      this.pongVelY = -this.pongVelY;
-    } else if (state.ballY >= 396) {
-      state.ballY = 396;
-      this.pongVelY = -this.pongVelY;
-    }
-
-    // Bounce off paddles
-    if (this.pongVelX < 0 && state.ballX <= 30 && state.ballX >= 20) {
-      if (state.ballY >= state.paddle1Y && state.ballY <= state.paddle1Y + 80) {
-        state.ballX = 30;
-        this.pongVelX = -this.pongVelX;
-        const hitOffset = (state.ballY - (state.paddle1Y + 40)) / 40;
-        this.pongVelY = hitOffset * 6;
-      }
-    }
-
-    if (this.pongVelX > 0 && state.ballX >= 570 && state.ballX <= 580) {
-      if (state.ballY >= state.paddle2Y && state.ballY <= state.paddle2Y + 80) {
-        state.ballX = 570;
-        this.pongVelX = -this.pongVelX;
-        const hitOffset = (state.ballY - (state.paddle2Y + 40)) / 40;
-        this.pongVelY = hitOffset * 6;
-      }
-    }
-
-    // Out of bounds
-    if (state.ballX < 0) {
-      game.score2++;
-      this.resetBall();
-    } else if (state.ballX > 600) {
+    if (scored === 1) {
       game.score1++;
-      this.resetBall();
+    } else if (scored === 2) {
+      game.score2++;
     }
 
-    // Check game over
-    if (game.score1 >= 5) {
+    if (game.score1 >= PONG_WIN_SCORE) {
       game.winnerSessionId = game.player1!.sessionId;
       game.status = "gameover";
       if (this.pongInterval) {
         this.pongInterval.clear();
         this.pongInterval = undefined;
       }
-    } else if (game.score2 >= 5) {
+      game.state = this.projectPong(this.pongSim);
+      this.pongSim = null;
+      this.broadcast(S2C.GAME_UPDATE, { game });
+      return;
+    } else if (game.score2 >= PONG_WIN_SCORE) {
       game.winnerSessionId = game.player2!.sessionId;
       game.status = "gameover";
       if (this.pongInterval) {
         this.pongInterval.clear();
         this.pongInterval = undefined;
       }
+      game.state = this.projectPong(this.pongSim);
+      this.pongSim = null;
+      this.broadcast(S2C.GAME_UPDATE, { game });
+      return;
     }
 
-    this.broadcast(S2C.GAME_UPDATE, { game });
-  }
-
-  private resetBall(): void {
-    const game = this.games.get("lounge:ping-pong");
-    if (!game || !game.state) return;
-    const state = game.state as PongState;
-    state.ballX = 300;
-    state.ballY = 200;
-    this.pongVelX = this.pongVelX > 0 ? -6 : 6;
-    this.pongVelY = (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 3);
+    this.pongSinceBroadcastMs += dt;
+    if (this.pongSinceBroadcastMs >= 32 || scored !== null) {
+      this.pongSinceBroadcastMs = 0;
+      game.state = this.projectPong(this.pongSim);
+      this.broadcast(S2C.GAME_UPDATE, { game });
+    }
   }
 
   private handleGameInput(client: Client, payload: { gameId: string, input: any }): void {
