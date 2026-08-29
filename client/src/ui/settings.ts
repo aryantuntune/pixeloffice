@@ -103,6 +103,15 @@ export function readHideNpcs(): boolean {
   }
 }
 
+/** Read-only accessor for persisted location sync consent. */
+export function readLocationSync(): boolean {
+  try {
+    return localStorage.getItem(LOCATION_SYNC_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function mountSettings(parent: HTMLElement, cb: SettingsCallbacks): SettingsHandle {
   const state = readValues();
   // Apply the reduced-motion body class immediately on mount so CSS animations

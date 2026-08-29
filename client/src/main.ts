@@ -73,7 +73,7 @@ import { mountCalendarConnect, type CalendarConnectHandle } from "./ui/calendar-
 import { mountEmoteBar, type EmoteBarHandle } from "./ui/emote-bar";
 import { mountProfileCard, type ProfileCardHandle } from "./ui/profile-card";
 import { mountMinimap, type MinimapHandle } from "./ui/minimap";
-import { mountSettings, readHideNpcs, type SettingsHandle } from "./ui/settings";
+import { mountSettings, readHideNpcs, readLocationSync, type SettingsHandle } from "./ui/settings";
 import { mountOnboarding, type OnboardingHandle } from "./ui/onboarding";
 import { createMapStudio, type MapStudioHandle } from "./ui/map-studio";
 import { mountProximityCall, type ProximityCallHandle } from "./ui/proximity-call";
@@ -587,6 +587,11 @@ async function boot(conn: Connection, welcome: WelcomePayload): Promise<void> {
   // Re-apply persisted settings to the freshly-built game handle every boot
   // (the game is recreated on each WELCOME, so zoom/motion/NPC must be re-pushed).
   settings.applyToGame();
+
+  // If the user previously opted in to floor sync, auto-enable over the live connection.
+  if (readLocationSync()) {
+    conn.send(C2S.SET_LOCATION_SYNC, { enabled: true });
+  }
 
   login.hide();
 
