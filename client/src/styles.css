@@ -4745,3 +4745,15 @@ body.reduced-motion *::after {
   background: color-mix(in srgb, var(--c-danger) 22%, var(--panel));
   border-color: color-mix(in srgb, var(--c-danger) 55%, var(--border));
 }
+
+/* Full screen / HUD hide mode */
+#hud-root.hud-hidden > .hud-layer > .hud-topbar > :not(.settings-wrap),
+#hud-root.hud-hidden > .hud-layer > .hud-sidebar,
+#hud-root.hud-hidden > .hud-layer > .hud-sidebar-toggle,
+#hud-root.hud-hidden > .hud-layer > .hud-chat,
+#hud-root.hud-hidden > #hud-bl-stack,
+#hud-root.hud-hidden > .minimap,
+#hud-root.hud-hidden > .admin-trigger,
+#hud-root.hud-hidden > .ms-trigger {
+  display: none !important;
+}

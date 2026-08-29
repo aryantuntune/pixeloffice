@@ -141,6 +141,16 @@ export class Connection {
       maxDelayMs: reconnect.maxDelayMs ?? DEFAULT_MAX_DELAY_MS,
       maxAttempts: reconnect.maxAttempts ?? Number.POSITIVE_INFINITY,
     };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          if (this.state === "reconnecting") {
+            this.clearReconnectTimer();
+            void this.tryReconnect();
+          }
+        }
+      });
+    }
   }
 
   /** Join the office room with the dev auth profile. Resolves once joined.

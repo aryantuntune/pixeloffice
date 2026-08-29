@@ -81,8 +81,11 @@ import { appRedirectForPublicHash, routeForPath } from "./public-routes";
 import { renderPublicPage } from "./public-pages";
 
 function bootOffice(): void {
-document.body.classList.remove("public-route");
-document.body.classList.add("office-route");
+  if (typeof Notification !== "undefined" && Notification.permission === "default") {
+    void Notification.requestPermission();
+  }
+  document.body.classList.remove("public-route");
+  document.body.classList.add("office-route");
 
 const gameRoot = document.getElementById("game-root")!;
 const hudRoot = document.getElementById("hud-root")!;
@@ -678,6 +681,22 @@ function registerBridge(conn: Connection): void {
   // self + everyone (presence, not surveillance: ephemeral, nothing stored).
   conn.on<EmoteBroadcastPayload>(S2C.EMOTE, ({ sessionId, emote }) => {
     game?.showEmote(sessionId, emote);
+    const player = store?.get().players.get(sessionId);
+    if (player && sessionId !== selfId) {
+      const typeKey = String(emote).toUpperCase();
+      const action =
+        typeKey === "WAVE" ? "waved 👋" :
+        typeKey === "THUMB" ? "gave a thumbs up 👍" :
+        typeKey === "COFFEE" ? "wants a coffee break ☕" :
+        typeKey === "HEART" ? "sent a heart ❤️" : "sent an emote";
+      
+      const msg = `${player.name} ${action}`;
+      toasts.show(msg, "info");
+      
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification("PixelOffice", { body: msg });
+      }
+    }
   });
 
   conn.on<EventCreatedPayload>(S2C.EVENT_CREATED, ({ event }) => {

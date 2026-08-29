@@ -414,6 +414,9 @@ export function mountProximityCall(
         requestedKind.set(p.from, p.kind);
         call = { peerId: p.from, peerName: p.fromName, kind: p.kind, phase: "incoming" };
         deps.toast?.(`${p.fromName} is ${p.kind === "video" ? "video " : ""}calling…`);
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("PixelOffice", { body: `${p.fromName} is ${p.kind === "video" ? "video " : ""}calling…` });
+        }
         render();
         break;
       }
