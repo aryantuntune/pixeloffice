@@ -3,8 +3,8 @@
 set -e
 
 IMAGE="djdiptayan/pixeloffice:latest"
-CONTAINER_NAME="pixeloffice"
-ENV_FILE="pixeloffice.env"
+CONTAINER_NAME="pixeloffice-app"
+ENV_FILE=".env.pixeloffice"
 HOST_PORT="127.0.0.1:2567"
 CONTAINER_PORT="2567"
 

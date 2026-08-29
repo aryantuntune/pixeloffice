@@ -44,21 +44,12 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            cd /home/ubuntu/services/pixeloffice
+            cd /home/ubuntu/services
 
-            # Pull fresh image and recreate container on services_default network
+            # Pull fresh image and recreate container using unified compose stack
             sudo podman pull djdiptayan/pixeloffice:latest
-            sudo podman stop pixeloffice-app 2>/dev/null || true
-            sudo podman rm -f pixeloffice-app 2>/dev/null || true
-            sudo podman run -d \
-              --name pixeloffice-app \
-              --init \
-              --restart unless-stopped \
-              --env-file .env \
-              -e PORT=2567 \
-              -p 127.0.0.1:2567:2567 \
-              --network services_default \
-              djdiptayan/pixeloffice:latest
+            sudo podman-compose up -d
+
             # Verify PixelOffice is healthy after redeploy
             for i in $(seq 1 20); do
               if curl -sf -o /dev/null http://localhost:2567/api/health; then
