@@ -19,6 +19,16 @@ export interface RedisConfig {
 }
 
 /**
+ * Reconnect backoff for the ioredis connection itself. MUST NEVER return null
+ * (that permanently stops reconnection) — a boot-time race where this app
+ * starts before Redis is listening must not turn into "dead forever".
+ * Exported so the "never gives up" property has a runnable check.
+ */
+export function redisRetryStrategy(times: number): number {
+  return Math.min(times * 200, 5000);
+}
+
+/**
  * Owns a single ioredis client. Construct via `RedisStore.fromEnv()` (returns
  * null when REDIS_URL is absent) so callers can fall back to in-memory storage.
  */
@@ -34,9 +44,14 @@ export class RedisStore {
       // Some managed Redis ACL users block INFO, which ioredis uses for the
       // ready check. greytHR uses the same setting for this shared Redis.
       enableReadyCheck: false,
-      // Bounded retries: don't spin forever against a dead server.
+      // Bounded per-command retries: a command fails fast against a dead
+      // server rather than hanging (health()/callers still degrade gracefully).
       maxRetriesPerRequest: 1,
-      retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)),
+      // But the CONNECTION itself must keep retrying forever with backoff —
+      // returning null here stops reconnection permanently. That's what let a
+      // boot-time race (redis not yet listening) turn into "never reconnected
+      // for 5 days" once the container started a few seconds before Redis.
+      retryStrategy: redisRetryStrategy,
     };
     this.client = new Redis(config.url, options);
     // Swallow connection errors at the client level so an unreachable Redis
