@@ -1023,22 +1023,27 @@ body:not(.office-route) #login-root {
 .toast {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 220px;
-  max-width: 380px;
-  background: linear-gradient(180deg, rgba(26, 33, 43, 0.97), rgba(20, 26, 34, 0.97));
-  border: 1px solid var(--border);
+  gap: 12px;
+  min-width: 240px;
+  max-width: 400px;
+  background: linear-gradient(180deg, rgba(24, 32, 44, 0.9), rgba(16, 21, 29, 0.94));
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-left: 4px solid var(--toast-accent, var(--accent-2));
-  border-radius: 9px;
-  padding: 11px 14px;
+  border-radius: 12px;
+  padding: 12px 16px;
   font-size: 13px;
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  font-weight: 500;
+  box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   opacity: 0;
-  transform: translateY(-10px) scale(0.98);
-  transition: opacity 0.22s ease, transform 0.22s var(--ease);
+  transform: translateY(-12px) scale(0.96);
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   cursor: pointer;
+}
+.toast:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 .toast-in {
@@ -1048,7 +1053,7 @@ body:not(.office-route) #login-root {
 
 .toast-out {
   opacity: 0;
-  transform: translateY(-10px) scale(0.98);
+  transform: translateY(-12px) scale(0.96);
 }
 
 .toast-icon {
@@ -4496,12 +4501,15 @@ body.reduced-motion *::after {
 
 .prox-prompt,
 .prox-incoming,
-.prox-panel {
-  background: var(--panel);
-  border: 1px solid var(--c-line);
+.prox-panel,
+.prox-preview {
+  background: linear-gradient(180deg, rgba(24, 32, 44, 0.88), rgba(16, 21, 29, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--r-md);
-  box-shadow: var(--shadow-lg);
-  padding: var(--sp-3);
+  box-shadow: 0 16px 40px -6px rgba(0, 0, 0, 0.65), 0 0 20px rgba(62, 207, 110, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  padding: 14px 16px;
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   animation: prox-rise var(--t-base) var(--ease-out);
 }
 @keyframes prox-rise {
@@ -4525,37 +4533,56 @@ body.reduced-motion *::after {
   font: inherit;
   font-size: 13px;
   font-weight: 600;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--c-line);
-  background: var(--panel-2);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(30, 39, 52, 0.8);
   color: var(--c-text);
-  padding: 7px 12px;
+  padding: 8px 14px;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: background var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), box-shadow 0.15s ease, filter 0.15s ease;
 }
-.prox-btn:hover { background: var(--panel-3); }
-.prox-btn:active { transform: translateY(1px); }
+.prox-btn:hover {
+  background: rgba(42, 54, 72, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.prox-btn:active { transform: translateY(0) scale(0.97); }
 .prox-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 .prox-btn-audio,
 .prox-btn-accept {
-  background: var(--c-accent);
-  color: var(--c-accent-ink);
+  background: linear-gradient(135deg, #4ad97d, #3ecf6e);
+  color: #07200f;
   border-color: transparent;
+  box-shadow: 0 0 14px rgba(62, 207, 110, 0.35);
 }
 .prox-btn-audio:hover,
-.prox-btn-accept:hover { background: var(--c-accent-bright); }
+.prox-btn-accept:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 18px rgba(62, 207, 110, 0.5);
+}
 .prox-btn-video {
-  background: var(--c-info);
+  background: linear-gradient(135deg, #3d84ee, #2e6fd8);
   color: #fff;
   border-color: transparent;
+  box-shadow: 0 0 14px rgba(46, 111, 216, 0.35);
 }
-.prox-btn-video:hover { background: var(--c-info-bright); }
+.prox-btn-video:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 18px rgba(46, 111, 216, 0.5);
+}
 .prox-btn-reject,
 .prox-btn-hangup {
-  background: var(--c-danger);
+  background: linear-gradient(135deg, #ef6258, #e5544b);
   color: #fff;
   border-color: transparent;
+  box-shadow: 0 0 12px rgba(229, 84, 75, 0.35);
+}
+.prox-btn-reject:hover,
+.prox-btn-hangup:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 18px rgba(229, 84, 75, 0.5);
 }
 .prox-btn-mute.is-muted {
   background: var(--c-warn);
@@ -4563,12 +4590,12 @@ body.reduced-motion *::after {
   border-color: transparent;
 }
 
-.prox-incoming { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 220px; }
+.prox-incoming { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 230px; }
 .prox-incoming-text { font-size: 14px; font-weight: 600; }
 .prox-incoming-btns { display: flex; gap: var(--sp-2); }
 .prox-incoming-btns .prox-btn { flex: 1; }
 
-.prox-panel { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 240px; }
+.prox-panel { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 250px; }
 .prox-panel-title { font-size: 13px; font-weight: 600; color: var(--c-text); }
 .prox-tiles {
   position: relative;
@@ -4579,7 +4606,13 @@ body.reduced-motion *::after {
   overflow: hidden;
 }
 .prox-video { background: #000; display: block; }
-.prox-remote { width: 320px; max-width: 60vw; aspect-ratio: 4 / 3; object-fit: cover; }
+.prox-remote {
+  width: 320px;
+  max-width: 60vw;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+}
 .prox-local {
   position: absolute;
   right: 8px;
@@ -4587,7 +4620,7 @@ body.reduced-motion *::after {
   width: 88px;
   aspect-ratio: 4 / 3;
   object-fit: cover;
-  border: 1px solid var(--c-line);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--r-xs);
   box-shadow: var(--shadow);
 }
@@ -4596,16 +4629,10 @@ body.reduced-motion *::after {
 .prox-controls .prox-btn-hangup { margin-left: auto; }
 
 .prox-preview {
-  background: var(--panel);
-  border: 1px solid var(--c-line);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-lg);
-  padding: var(--sp-3);
-  animation: prox-rise var(--t-base) var(--ease-out);
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  min-width: 240px;
+  min-width: 250px;
   align-items: center;
 }
 .prox-preview-title {
@@ -4615,18 +4642,23 @@ body.reduced-motion *::after {
   margin-bottom: var(--sp-1);
 }
 .prox-preview-video {
-  width: 200px;
+  width: 220px;
   aspect-ratio: 4 / 3;
   object-fit: cover;
-  border: 1px solid var(--c-line);
-  border-radius: var(--r-xs);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
   background: #000;
   display: block;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 .prox-preview-countdown {
-  font-size: 14px;
-  font-weight: bold;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--c-warn);
+  background: rgba(232, 161, 60, 0.12);
+  border: 1px solid rgba(232, 161, 60, 0.3);
+  padding: 4px 10px;
+  border-radius: 999px;
 }
 .prox-preview-btns {
   display: flex;
