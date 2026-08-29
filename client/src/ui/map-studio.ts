@@ -80,7 +80,11 @@ type ZoneCellKind =
   | "coffee"
   | "lounge"
   | "reception"
-  | "cabin";
+  | "cabin"
+  | "dept-engineering"
+  | "dept-product"
+  | "dept-design"
+  | "dept-hr";
 
 type CellKind =
   | "empty" // open, walkable floor
@@ -93,6 +97,22 @@ const ZONE_AREA_TYPE: Record<ZoneCellKind, AreaType> = {
   lounge: "LOUNGE",
   reception: "RECEPTION",
   cabin: "MEETING_ROOM", // a cabin is a small named meeting-style room
+  "dept-engineering": "DEPARTMENT",
+  "dept-product": "DEPARTMENT",
+  "dept-design": "DEPARTMENT",
+  "dept-hr": "DEPARTMENT",
+};
+
+const ZONE_DEPARTMENT: Record<ZoneCellKind, Department | undefined> = {
+  meeting: undefined,
+  coffee: undefined,
+  lounge: undefined,
+  reception: undefined,
+  cabin: undefined,
+  "dept-engineering": "Engineering",
+  "dept-product": "Product",
+  "dept-design": "Design",
+  "dept-hr": "HR",
 };
 
 const ZONE_LABEL: Record<ZoneCellKind, string> = {
@@ -101,8 +121,11 @@ const ZONE_LABEL: Record<ZoneCellKind, string> = {
   lounge: "Lounge",
   reception: "Reception",
   cabin: "Cabin",
+  "dept-engineering": "Engineering",
+  "dept-product": "Product",
+  "dept-design": "Design",
+  "dept-hr": "HR",
 };
-
 interface DeskMark {
   x: number;
   y: number;
@@ -188,9 +211,16 @@ function cellColor(kind: CellKind): string {
       return "#1f4f4c";
     case "cabin":
       return "#234a2c";
+    case "dept-engineering":
+      return "#1e3a5f";
+    case "dept-product":
+      return "#3d2b5c";
+    case "dept-design":
+      return "#1f4f3c";
+    case "dept-hr":
+      return "#5c4a1e";
   }
 }
-
 const TILE_PX = 16; // canvas pixels per tile (independent of game TILE size)
 const DEFAULT_W = 48;
 const DEFAULT_H = 34;
@@ -525,7 +555,16 @@ export function createMapStudio(
       case "RECEPTION":
         return "reception";
       case "DEPARTMENT":
-        return null; // departments are represented by desks, not a paint cell
+        if (a.department === "Engineering") return "dept-engineering";
+        if (a.department === "Product") return "dept-product";
+        if (a.department === "Design") return "dept-design";
+        if (a.department === "HR") return "dept-hr";
+        const lower = a.name.toLowerCase();
+        if (lower.includes("eng")) return "dept-engineering";
+        if (lower.includes("prod")) return "dept-product";
+        if (lower.includes("des")) return "dept-design";
+        if (lower.includes("hr")) return "dept-hr";
+        return "dept-engineering";
     }
   }
 
@@ -617,8 +656,15 @@ export function createMapStudio(
     const usedNames = new Set<string>();
 
     const isZone = (k: CellKind): k is ZoneCellKind =>
-      k === "meeting" || k === "coffee" || k === "lounge" || k === "reception" || k === "cabin";
-
+      k === "meeting" ||
+      k === "coffee" ||
+      k === "lounge" ||
+      k === "reception" ||
+      k === "cabin" ||
+      k === "dept-engineering" ||
+      k === "dept-product" ||
+      k === "dept-design" ||
+      k === "dept-hr";
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const k = grid[y][x];
@@ -650,9 +696,11 @@ export function createMapStudio(
         while (usedNames.has(name)) name = `${baseName} ${suffix++}`;
         usedNames.add(name);
 
+        const dept = ZONE_DEPARTMENT[k];
         areas.push({
           name,
           type: ZONE_AREA_TYPE[k],
+          ...(dept ? { department: dept } : {}),
           x: minX,
           y: minY,
           w: maxX - minX + 1,
@@ -1165,6 +1213,10 @@ export function createMapStudio(
       case "lounge":
       case "reception":
       case "cabin":
+      case "dept-engineering":
+      case "dept-product":
+      case "dept-design":
+      case "dept-hr":
         floor.grid[t.y][t.x] = tool;
         break;
       case "desk":
